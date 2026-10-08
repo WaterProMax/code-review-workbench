@@ -1,0 +1,994 @@
+{
+  "Task": {
+    "root_running": {
+      "task_id": "T100",
+      "root_task_id": "T100",
+      "parent_task_id": null,
+      "task_level": "root",
+      "goal": "检查上传项目并按需修复发现的问题",
+      "depends_on": [],
+      "status": "running",
+      "passed": null,
+      "workflow_version": "workflow-sequential-1",
+      "revision": 3,
+      "created_at": "2026-10-08T02:00:00Z",
+      "updated_at": "2026-10-08T02:05:00Z"
+    },
+    "child_queued": {
+      "task_id": "T102",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_level": "child",
+      "agent_id": "fixer",
+      "agent_version": "1.0",
+      "task_kind": "fix",
+      "goal": "根据第一轮验证失败证据修复剩余问题",
+      "depends_on": [
+        {
+          "task_id": "T101",
+          "attempt_id": "T101-A1",
+          "condition": "review_completed_false",
+          "artifact_refs": [
+            "artifact-findings-1"
+          ]
+        }
+      ],
+      "status": "queued",
+      "passed": null,
+      "workflow_version": "workflow-sequential-1",
+      "revision": 1,
+      "created_at": "2026-10-08T02:01:00Z",
+      "updated_at": "2026-10-08T02:01:00Z"
+    },
+    "child_skipped_first_pass": {
+      "task_id": "T103",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_level": "child",
+      "agent_id": "verifier",
+      "agent_version": "1.0",
+      "task_kind": "verify",
+      "goal": "验证修改后版本满足约定检查",
+      "depends_on": [],
+      "status": "skipped",
+      "passed": null,
+      "skip_reason": "first_review_passed",
+      "workflow_version": "workflow-sequential-1",
+      "revision": 1,
+      "created_at": "2026-10-08T02:02:00Z",
+      "updated_at": "2026-10-08T02:02:00Z"
+    }
+  },
+  "Attempt": {
+    "fix_attempt_2": {
+      "attempt_id": "T102-A2",
+      "task_id": "T102",
+      "root_task_id": "T100",
+      "dispatch_batch_id": "B3",
+      "attempt_no": 2,
+      "source_version": "version-1",
+      "contract_version": "contract-1",
+      "input_refs": {
+        "source": "artifact-source-v1",
+        "acceptance_contract": "artifact-contract-1",
+        "findings": "artifact-findings-1",
+        "previous_patch": "artifact-patch-1",
+        "verification": "artifact-verification-1"
+      },
+      "status": "running",
+      "retry_reason": "insufficient_evidence",
+      "started_at": "2026-10-08T02:10:00Z",
+      "created_at": "2026-10-08T02:10:00Z"
+    }
+  },
+  "TaskEnvelope": {
+    "fix_round_2": {
+      "schema_version": "1.0",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_id": "T102",
+      "attempt_id": "T102-A2",
+      "dispatch_batch_id": "B3",
+      "agent_id": "fixer",
+      "agent_version": "1.0",
+      "task_kind": "fix",
+      "goal": "根据第一轮验证失败证据修复剩余问题",
+      "source_version": "version-1",
+      "contract_version": "contract-1",
+      "input_refs": {
+        "source": "artifact-source-v1",
+        "acceptance_contract": "artifact-contract-1",
+        "findings": "artifact-findings-1",
+        "previous_patch": "artifact-patch-1",
+        "verification": "artifact-verification-1"
+      },
+      "acceptance_criteria": [
+        "为目标问题生成可匹配当前版本的候选补丁"
+      ],
+      "constraints": {
+        "max_tool_steps": 8,
+        "timeout_seconds": 60
+      }
+    }
+  },
+  "TaskResult": {
+    "review_passed": {
+      "schema_version": "1.0",
+      "result_id": "R-T101-A1",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_id": "T101",
+      "attempt_id": "T101-A1",
+      "dispatch_batch_id": "B1",
+      "agent_id": "reviewer",
+      "agent_version": "1.0",
+      "task_kind": "review",
+      "source_version": "version-1",
+      "contract_version": "contract-1",
+      "status": "completed",
+      "passed": true,
+      "summary": "全部必需检查在当前版本通过，未发现目标问题",
+      "result_refs": {
+        "findings": "artifact-findings-1"
+      },
+      "evidence_refs": [
+        "artifact-ast-1",
+        "artifact-check-1"
+      ],
+      "error": null,
+      "started_at": "2026-10-08T02:00:00Z",
+      "finished_at": "2026-10-08T02:00:04Z"
+    },
+    "verify_failed": {
+      "schema_version": "1.0",
+      "result_id": "R-T103-A1",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_id": "T103",
+      "attempt_id": "T103-A1",
+      "dispatch_batch_id": "B2",
+      "agent_id": "verifier",
+      "agent_version": "1.0",
+      "task_kind": "verify",
+      "source_version": "version-1",
+      "contract_version": "contract-1",
+      "status": "completed",
+      "passed": false,
+      "summary": "约定测试已执行，仍有一项失败",
+      "result_refs": {
+        "verification": "artifact-verification-1"
+      },
+      "evidence_refs": [
+        "artifact-test-output-1"
+      ],
+      "error": null,
+      "started_at": "2026-10-08T02:00:00Z",
+      "finished_at": "2026-10-08T02:00:03Z"
+    },
+    "fix_completed_null": {
+      "schema_version": "1.0",
+      "result_id": "R-T102-A1",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_id": "T102",
+      "attempt_id": "T102-A1",
+      "dispatch_batch_id": "B2",
+      "agent_id": "fixer",
+      "agent_version": "1.0",
+      "task_kind": "fix",
+      "source_version": "version-1",
+      "contract_version": "contract-1",
+      "status": "completed",
+      "passed": null,
+      "summary": "已生成针对当前版本的候选补丁，等待应用与验证",
+      "result_refs": {
+        "patch": "artifact-patch-1"
+      },
+      "evidence_refs": [],
+      "error": null,
+      "started_at": "2026-10-08T02:00:00Z",
+      "finished_at": "2026-10-08T02:00:05Z"
+    },
+    "verify_execution_failed": {
+      "schema_version": "1.0",
+      "result_id": "R-T103-A1-f",
+      "root_task_id": "T100",
+      "parent_task_id": "T100",
+      "task_id": "T103",
+      "attempt_id": "T103-A1",
+      "dispatch_batch_id": "B2",
+      "agent_id": "verifier",
+      "agent_version": "1.0",
+      "task_kind": "verify",
+      "source_version": "version-1",
+      "contract_version": "contract-1",
+      "status": "failed",
+      "passed": null,
+      "summary": "验证执行失败：测试执行器缺少依赖",
+      "result_refs": {},
+      "evidence_refs": [
+        "artifact-tool-output-9"
+      ],
+      "error": {
+        "code": "MISSING_DEPENDENCY",
+        "category": "missing_dependency",
+        "message": "pytest 未安装，无法运行约定测试",
+        "recoverable": true,
+        "detail_ref": "artifact-tool-output-9"
+      },
+      "started_at": "2026-10-08T02:00:00Z",
+      "finished_at": "2026-10-08T02:00:01Z"
+    }
+  },
+  "AcceptanceContract": {
+    "repairable_example": {
+      "contract_version": "contract-1",
+      "root_task_id": "T100",
+      "user_goal": "检查异常处理和可变默认参数，发现问题后修复并验证",
+      "checks": [
+        {
+          "check_id": "CHK-SYNTAX",
+          "goal_ref": "上传项目可解析",
+          "scope": [
+            "helpers.py"
+          ],
+          "required": true,
+          "method": "syntax",
+          "pass_condition": "所有 Python 文件可通过 ast 解析",
+          "evidence_requirements": [
+            "ast 检查输出"
+          ],
+          "applicable_phase": "both",
+          "checker_version": "1.0"
+        },
+        {
+          "check_id": "CHK-MUTABLE-DEFAULT",
+          "goal_ref": "避免共享可变默认参数",
+          "scope": [
+            "helpers.py:add_item"
+          ],
+          "required": true,
+          "method": "static_rule",
+          "pass_condition": "add_item 不再使用共享可变默认参数",
+          "evidence_requirements": [
+            "静态规则命中结果"
+          ],
+          "applicable_phase": "both",
+          "checker_version": "1.0",
+          "rule_ids": [
+            "B006-mutable-default"
+          ]
+        },
+        {
+          "check_id": "CHK-AVG-EMPTY",
+          "goal_ref": "average 对空列表的行为",
+          "scope": [
+            "helpers.py:average"
+          ],
+          "required": true,
+          "method": "behavior_test",
+          "pass_condition": "空列表输入不抛 ZeroDivisionError",
+          "evidence_requirements": [
+            "测试执行输出与测试集摘要"
+          ],
+          "applicable_phase": "both",
+          "checker_version": "1.0"
+        }
+      ],
+      "created_at": "2026-10-08T01:59:00Z"
+    }
+  },
+  "CheckResult": {
+    "syntax_passed": {
+      "check_id": "CHK-SYNTAX",
+      "contract_version": "contract-1",
+      "source_version": "sv-0002",
+      "producer_attempt_id": "T103-A2",
+      "method": "syntax",
+      "status": "passed",
+      "evidence_refs": [
+        "artifact-ast-2"
+      ],
+      "executed": true
+    },
+    "behavior_passed": {
+      "check_id": "CHK-AVG-EMPTY",
+      "contract_version": "contract-1",
+      "source_version": "sv-0002",
+      "producer_attempt_id": "T103-A2",
+      "method": "behavior_test",
+      "status": "passed",
+      "evidence_refs": [
+        "artifact-test-output-2"
+      ],
+      "reason": "同一最小复现测试：基础版本失败、修复版本通过",
+      "test_count": 3,
+      "passed_count": 3,
+      "failed_count": 0,
+      "skipped_count": 0,
+      "test_suite_hash": "0f2a6c1b9d4e7a8b3c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+      "executed": true
+    },
+    "behavior_not_run": {
+      "check_id": "CHK-AVG-EMPTY",
+      "contract_version": "contract-1",
+      "source_version": "sv-0002",
+      "producer_attempt_id": "T103-A3",
+      "method": "behavior_test",
+      "status": "not_run",
+      "evidence_refs": [],
+      "reason": "测试执行器在执行目录不可用",
+      "executed": false
+    }
+  },
+  "Finding": {
+    "required_open": {
+      "finding_id": "F-1",
+      "root_task_id": "T100",
+      "source_version": "sv-0001",
+      "producer_attempt_id": "T101-A1",
+      "goal_ref": "避免共享可变默认参数",
+      "required_for_goal": true,
+      "check_id": "CHK-MUTABLE-DEFAULT",
+      "file_path": "helpers.py",
+      "line": 8,
+      "symbol": "add_item",
+      "rule": "B006-mutable-default",
+      "severity": "warning",
+      "message": "add_item 使用共享的可变默认参数 items=[]",
+      "evidence_refs": [
+        "artifact-findings-1"
+      ],
+      "status": "open"
+    },
+    "resolved_with_recheck": {
+      "finding_id": "F-1",
+      "root_task_id": "T100",
+      "source_version": "sv-0001",
+      "producer_attempt_id": "T101-A1",
+      "goal_ref": "避免共享可变默认参数",
+      "required_for_goal": true,
+      "check_id": "CHK-MUTABLE-DEFAULT",
+      "file_path": "helpers.py",
+      "line": 8,
+      "symbol": "add_item",
+      "rule": "B006-mutable-default",
+      "severity": "warning",
+      "message": "add_item 使用共享的可变默认参数 items=[]",
+      "evidence_refs": [
+        "artifact-findings-1"
+      ],
+      "status": "resolved",
+      "resolution_evidence_refs": [
+        "artifact-recheck-2"
+      ]
+    }
+  },
+  "Patch": {
+    "unified_diff": {
+      "patch_id": "P-1",
+      "root_task_id": "T100",
+      "producer_attempt_id": "T102-A1",
+      "base_version": "sv-0001",
+      "target_finding_ids": [
+        "F-1"
+      ],
+      "format": "unified_diff",
+      "diff_text": "--- a/helpers.py\n+++ b/helpers.py\n@@ -6,7 +6,9 @@\n-def add_item(item, items=[]):\n+def add_item(item, items=None):\n+    if items is None:\n+        items = []\n     items.append(item)\n     return items\n",
+      "rationale": "改用 None 作为默认值并在函数体内新建列表，避免跨调用共享状态",
+      "created_at": "2026-10-08T02:05:00Z"
+    },
+    "structured_edits": {
+      "patch_id": "P-2",
+      "root_task_id": "T100",
+      "producer_attempt_id": "T102-A2",
+      "base_version": "sv-0002",
+      "target_finding_ids": [
+        "F-2"
+      ],
+      "format": "structured_edits",
+      "edits": [
+        {
+          "file_path": "helpers.py",
+          "find": "    return sum(values) / len(values)",
+          "replace": "    if not values:\n        raise ValueError(\"average() requires at least one value\")\n    return sum(values) / len(values)",
+          "occurrence": 1
+        }
+      ],
+      "rationale": "对空输入显式报错，避免 ZeroDivisionError",
+      "created_at": "2026-10-08T02:06:00Z"
+    }
+  },
+  "PatchApplication": {
+    "committed": {
+      "application_id": "PA-1",
+      "root_task_id": "T100",
+      "patch_id": "P-1",
+      "repair_attempt_id": "T102-A1",
+      "base_version": "sv-0001",
+      "result_version": "sv-0002",
+      "status": "committed",
+      "idempotency_key": "apply:T100:P-1:sv-0001",
+      "prepared_at": "2026-10-08T02:06:00Z",
+      "committed_at": "2026-10-08T02:06:01Z"
+    },
+    "failed_syntax": {
+      "application_id": "PA-2",
+      "root_task_id": "T100",
+      "patch_id": "P-3",
+      "repair_attempt_id": "T102-A2",
+      "base_version": "sv-0002",
+      "status": "failed",
+      "idempotency_key": "apply:T100:P-3:sv-0002",
+      "error": "候选文件语法检查失败：expected ':'",
+      "prepared_at": "2026-10-08T02:07:00Z"
+    }
+  },
+  "VerificationReport": {
+    "passed_after_patch": {
+      "verification_id": "V-1",
+      "root_task_id": "T100",
+      "producer_attempt_id": "T103-A2",
+      "source_version": "sv-0002",
+      "contract_version": "contract-1",
+      "target_finding_ids": [
+        "F-1"
+      ],
+      "check_results": [
+        {
+          "check_id": "CHK-SYNTAX",
+          "contract_version": "contract-1",
+          "source_version": "sv-0002",
+          "producer_attempt_id": "T103-A2",
+          "method": "syntax",
+          "status": "passed",
+          "evidence_refs": [
+            "artifact-ast-2"
+          ],
+          "executed": true
+        },
+        {
+          "check_id": "CHK-AVG-EMPTY",
+          "contract_version": "contract-1",
+          "source_version": "sv-0002",
+          "producer_attempt_id": "T103-A2",
+          "method": "behavior_test",
+          "status": "passed",
+          "evidence_refs": [
+            "artifact-test-output-2"
+          ],
+          "test_count": 3,
+          "passed_count": 3,
+          "failed_count": 0,
+          "skipped_count": 0,
+          "test_suite_hash": "0f2a6c1b9d4e7a8b3c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+          "executed": true
+        }
+      ],
+      "coverage": [
+        "helpers.py"
+      ],
+      "not_run": [],
+      "passed": true,
+      "evidence_refs": [
+        "artifact-test-output-2"
+      ],
+      "notes": "已在修复版本上重跑同一最小复现测试"
+    }
+  },
+  "FinalReport": {
+    "passed_after_repair": {
+      "report_id": "REP-1",
+      "root_task_id": "T100",
+      "final_status": "completed",
+      "passed": true,
+      "goal": "检查异常处理和可变默认参数，发现问题后修复并验证",
+      "conclusion_scope": "结论仅覆盖本次约定检查项；未声明未执行的检查也通过",
+      "source_version": "sv-0002",
+      "workflow_version": "workflow-sequential-1",
+      "contract_version": "contract-1",
+      "checks": [
+        {
+          "check_id": "CHK-SYNTAX",
+          "goal_ref": "上传项目可解析",
+          "method": "syntax",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "artifact-ast-2",
+          "source_version": "sv-0002"
+        },
+        {
+          "check_id": "CHK-AVG-EMPTY",
+          "goal_ref": "average 对空列表的行为",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "artifact-test-output-2",
+          "source_version": "sv-0002"
+        }
+      ],
+      "unresolved_finding_ids": [],
+      "not_run_items": [],
+      "skipped_tasks": [],
+      "versions": {
+        "reviewer": "1.0",
+        "fixer": "1.0",
+        "verifier": "1.0"
+      },
+      "execution_summary": {
+        "attempts": 3,
+        "repair_round": 1
+      },
+      "generated_at": "2026-10-08T02:20:00Z"
+    }
+  },
+  "ParentAction": {
+    "dispatch_task_review": {
+      "action": "dispatch_task",
+      "task": {
+        "agent_id": "reviewer",
+        "task_kind": "review",
+        "goal": "按冻结检查合同审查当前版本",
+        "input_refs": {
+          "source": "artifact-source-v1",
+          "acceptance_contract": "artifact-contract-1"
+        },
+        "acceptance_criteria": [
+          "覆盖全部必需检查项并给出证据"
+        ],
+        "reason": "首次审查"
+      }
+    },
+    "dispatch_batch_verify_recheck": {
+      "action": "dispatch_batch",
+      "tasks": [
+        {
+          "agent_id": "verifier",
+          "task_kind": "verify",
+          "goal": "验证修改后版本满足约定检查",
+          "input_refs": {
+            "source": "artifact-source-v2",
+            "acceptance_contract": "artifact-contract-1",
+            "findings": "artifact-findings-1"
+          },
+          "acceptance_criteria": [
+            "必需检查在当前版本有证据"
+          ],
+          "task_id": "T103",
+          "reason": "修改后首次验证"
+        },
+        {
+          "agent_id": "reviewer",
+          "task_kind": "review",
+          "goal": "复审修改后版本的目标问题是否关闭",
+          "input_refs": {
+            "source": "artifact-source-v2",
+            "acceptance_contract": "artifact-contract-1",
+            "findings": "artifact-findings-1"
+          },
+          "acceptance_criteria": [
+            "必需目标问题由当前版本证据关闭"
+          ],
+          "task_id": "T104",
+          "reason": "修改后并行复审"
+        }
+      ],
+      "reason": "候选补丁已应用，同批次复审与验证同一冻结版本"
+    },
+    "apply_patch": {
+      "action": "apply_patch",
+      "patch_ref": "artifact-patch-1",
+      "base_version": "sv-0001",
+      "repair_attempt_id": "T102-A1",
+      "reason": "候选补丁针对当前版本且目标文件范围合法"
+    },
+    "wait_for_recovery": {
+      "action": "wait_for_recovery",
+      "reason": "两轮自动修复额度已耗尽，仍有必需检查失败",
+      "required_action": "处理故障或追加修复额度后恢复；需要更换输入或目标则新建任务",
+      "known_passed": false
+    },
+    "finish": {
+      "action": "finish",
+      "proposed_passed": true,
+      "report_refs": [
+        "artifact-report-1"
+      ],
+      "reason": "当前版本所有必需检查通过且无未解决必需问题"
+    }
+  },
+  "TerminalRecord": {
+    "controller_timeout": {
+      "attempt_id": "T103-A1",
+      "dispatch_batch_id": "B2",
+      "origin": "controller",
+      "outcome": "failed",
+      "error_ref": "artifact-timeout-1",
+      "fencing_token": 7,
+      "operation_key": "terminal:T100:T103-A1",
+      "created_at": "2026-10-08T02:30:00Z"
+    },
+    "agent_completed": {
+      "attempt_id": "T101-A1",
+      "dispatch_batch_id": "B1",
+      "origin": "agent",
+      "outcome": "completed",
+      "result_id": "R-T101-A1",
+      "fencing_token": 7,
+      "operation_key": "terminal:T100:T101-A1",
+      "created_at": "2026-10-08T02:00:04Z"
+    }
+  },
+  "BudgetLedgerEntry": {
+    "consume_repair_round": {
+      "root_task_id": "T100",
+      "budget_kind": "repair_round",
+      "scope_key": "root",
+      "operation_key": "consume:dispatch:T100:T102:T102-A1",
+      "delta": -1,
+      "reason": "派发新的 fix attempt（计入修复轮数）"
+    },
+    "grant_resume": {
+      "root_task_id": "T100",
+      "budget_kind": "repair_round",
+      "scope_key": "root",
+      "operation_key": "grant:resume:seg-2:repair_round",
+      "delta": 1,
+      "reason": "用户显式恢复并追加一轮修复许可"
+    }
+  },
+  "Artifact": {
+    "finding_artifact": {
+      "artifact_id": "artifact-findings-1",
+      "root_task_id": "T100",
+      "producer_attempt_id": "T101-A1",
+      "artifact_type": "finding",
+      "source_version": "sv-0001",
+      "storage_ref": "evidence/T100/findings/findings-1.json",
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 512,
+      "metadata": {
+        "count": 2,
+        "required_count": 1
+      },
+      "created_at": "2026-10-08T02:00:04Z"
+    }
+  },
+  "FileEntry": {
+    "python_file": {
+      "path": "pkg/helpers.py",
+      "size": 421,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "ExecutionEvent": {
+    "tool_finished": {
+      "event_id": "E-1",
+      "root_task_id": "T100",
+      "sequence": 5,
+      "task_id": "T101",
+      "attempt_id": "T101-A1",
+      "dispatch_batch_id": "B1",
+      "source_version": "sv-0001",
+      "timestamp": "2026-10-08T02:00:01Z",
+      "actor_id": "reviewer",
+      "event_type": "tool_finished",
+      "payload": {
+        "tool": "ast_check",
+        "ok": true
+      },
+      "artifact_refs": [],
+      "duration_ms": 120
+    }
+  },
+  "AgentSpec": {
+    "reviewer": {
+      "agent_id": "reviewer",
+      "version": "1.0",
+      "description": "审查 Agent：按约定检查项读取快照并生成 Finding",
+      "supported_task_kinds": [
+        "review"
+      ],
+      "input_schema": {
+        "type": "object"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "tool_names": [
+        "list_files",
+        "read_file",
+        "ast_check"
+      ],
+      "permissions": [
+        "read_workspace"
+      ],
+      "produced_artifact_types": [
+        "finding"
+      ],
+      "required_input_keys": [
+        "source",
+        "acceptance_contract"
+      ],
+      "retry_budget": {
+        "review": "review_retry"
+      }
+    }
+  },
+  "TaskControl": {
+    "leased": {
+      "root_task_id": "T100",
+      "lease_owner": "worker-1",
+      "lease_expires_at": "2026-10-08T02:40:00Z",
+      "heartbeat_at": "2026-10-08T02:35:00Z",
+      "fencing_token": 7,
+      "run_segment_id": "seg-1",
+      "graph_steps_granted": 256,
+      "graph_steps_used": 42,
+      "current_decision_id": "D-3",
+      "parent_corrections": 0
+    }
+  },
+  "IdempotencyRecord": {
+    "submit_request": {
+      "operation_key": "submit:8f14e45fceea167a",
+      "operation_kind": "submit_task",
+      "root_task_id": "T100",
+      "request_fingerprint": "sha256:8f14e45fceea167a5a36dedd4bea2543f8a2b4df6d8bb2f8c9b0a1e2d3f4a5b6",
+      "response_ref": "T100",
+      "created_at": "2026-10-08T02:00:00Z"
+    }
+  },
+  "WorkflowConfig": {
+    "sequential": {
+      "schema_version": "1.0",
+      "check_mode": "sequential",
+      "agents": {
+        "parent": "1.0",
+        "reviewer": "1.0",
+        "fixer": "1.0",
+        "verifier": "1.0"
+      },
+      "nodes": [
+        {
+          "id": "parent",
+          "type": "parent",
+          "agent_id": "parent"
+        },
+        {
+          "id": "review",
+          "type": "agent",
+          "agent_id": "reviewer",
+          "task_kind": "review"
+        },
+        {
+          "id": "fix",
+          "type": "agent",
+          "agent_id": "fixer",
+          "task_kind": "fix"
+        },
+        {
+          "id": "apply",
+          "type": "tool",
+          "tool_name": "apply_patch"
+        },
+        {
+          "id": "verify",
+          "type": "agent",
+          "agent_id": "verifier",
+          "task_kind": "verify"
+        },
+        {
+          "id": "end",
+          "type": "end"
+        }
+      ],
+      "edges": [
+        {
+          "source": "parent",
+          "target": "review"
+        },
+        {
+          "source": "review",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "fix"
+        },
+        {
+          "source": "fix",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "apply"
+        },
+        {
+          "source": "apply",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "verify"
+        },
+        {
+          "source": "verify",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "end"
+        }
+      ],
+      "dependencies": [
+        {
+          "source_node": "review",
+          "target_node": "fix",
+          "artifact": "finding"
+        },
+        {
+          "source_node": "apply",
+          "target_node": "verify",
+          "artifact": "patch_application"
+        }
+      ],
+      "budgets": {
+        "max_repair_rounds": 2,
+        "max_verification_retries": 2
+      }
+    },
+    "parallel": {
+      "schema_version": "1.0",
+      "check_mode": "parallel",
+      "agents": {
+        "parent": "1.0",
+        "reviewer": "1.0",
+        "fixer": "1.0",
+        "verifier": "1.0"
+      },
+      "nodes": [
+        {
+          "id": "parent",
+          "type": "parent",
+          "agent_id": "parent"
+        },
+        {
+          "id": "review",
+          "type": "agent",
+          "agent_id": "reviewer",
+          "task_kind": "review"
+        },
+        {
+          "id": "fix",
+          "type": "agent",
+          "agent_id": "fixer",
+          "task_kind": "fix"
+        },
+        {
+          "id": "apply",
+          "type": "tool",
+          "tool_name": "apply_patch"
+        },
+        {
+          "id": "verify",
+          "type": "agent",
+          "agent_id": "verifier",
+          "task_kind": "verify"
+        },
+        {
+          "id": "recheck",
+          "type": "agent",
+          "agent_id": "reviewer",
+          "task_kind": "review"
+        },
+        {
+          "id": "end",
+          "type": "end"
+        }
+      ],
+      "edges": [
+        {
+          "source": "parent",
+          "target": "review"
+        },
+        {
+          "source": "review",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "fix"
+        },
+        {
+          "source": "fix",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "apply"
+        },
+        {
+          "source": "apply",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "verify"
+        },
+        {
+          "source": "verify",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "recheck"
+        },
+        {
+          "source": "recheck",
+          "target": "parent"
+        },
+        {
+          "source": "parent",
+          "target": "end"
+        }
+      ],
+      "dependencies": [
+        {
+          "source_node": "review",
+          "target_node": "fix",
+          "artifact": "finding"
+        },
+        {
+          "source_node": "apply",
+          "target_node": "verify",
+          "artifact": "patch_application"
+        },
+        {
+          "source_node": "apply",
+          "target_node": "recheck",
+          "artifact": "patch_application"
+        }
+      ],
+      "budgets": {
+        "max_repair_rounds": 2,
+        "max_verification_retries": 2
+      }
+    }
+  },
+  "CheckSpec": {
+    "static_rule": {
+      "check_id": "CHK-MUTABLE-DEFAULT",
+      "goal_ref": "避免共享可变默认参数",
+      "scope": [
+        "helpers.py:add_item"
+      ],
+      "required": true,
+      "method": "static_rule",
+      "pass_condition": "add_item 不再使用共享可变默认参数",
+      "evidence_requirements": [
+        "静态规则命中结果"
+      ],
+      "applicable_phase": "both",
+      "checker_version": "1.0",
+      "rule_ids": [
+        "B006-mutable-default"
+      ]
+    },
+    "behavior_test": {
+      "check_id": "CHK-AVG-EMPTY",
+      "goal_ref": "average 对空列表的行为",
+      "scope": [
+        "helpers.py:average"
+      ],
+      "required": true,
+      "method": "behavior_test",
+      "pass_condition": "空列表输入不抛 ZeroDivisionError",
+      "evidence_requirements": [
+        "测试执行输出与测试集摘要"
+      ],
+      "applicable_phase": "both",
+      "checker_version": "1.0"
+    }
+  }
+}

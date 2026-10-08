@@ -1,0 +1,1153 @@
+{
+  "Task": {
+    "child_without_parent": {
+      "payload": {
+        "task_id": "T102",
+        "root_task_id": "T100",
+        "task_level": "child",
+        "agent_id": "fixer",
+        "agent_version": "1.0",
+        "task_kind": "fix",
+        "goal": "修复问题",
+        "status": "queued",
+        "workflow_version": "workflow-sequential-1"
+      },
+      "reason": "子任务必须携带 parent_task_id"
+    },
+    "root_with_child_status": {
+      "payload": {
+        "task_id": "T100",
+        "root_task_id": "T100",
+        "parent_task_id": null,
+        "task_level": "root",
+        "goal": "检查项目",
+        "status": "skipped",
+        "workflow_version": "workflow-sequential-1"
+      },
+      "reason": "总任务不能使用子任务状态（skipped），也不能被跳过"
+    },
+    "failed_but_passed_true": {
+      "payload": {
+        "task_id": "T103",
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_level": "child",
+        "agent_id": "verifier",
+        "agent_version": "1.0",
+        "task_kind": "verify",
+        "goal": "验证修改后版本",
+        "status": "failed",
+        "passed": true,
+        "workflow_version": "workflow-sequential-1"
+      },
+      "reason": "执行失败的任务不能同时 passed=true"
+    },
+    "skipped_without_reason": {
+      "payload": {
+        "task_id": "T103",
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_level": "child",
+        "agent_id": "verifier",
+        "agent_version": "1.0",
+        "task_kind": "verify",
+        "goal": "验证修改后版本",
+        "status": "skipped",
+        "workflow_version": "workflow-sequential-1"
+      },
+      "reason": "skipped 必须写明 skip_reason"
+    }
+  },
+  "TaskEnvelope": {
+    "missing_contract_version": {
+      "payload": {
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T102",
+        "attempt_id": "T102-A2",
+        "dispatch_batch_id": "B3",
+        "agent_id": "fixer",
+        "agent_version": "1.0",
+        "task_kind": "fix",
+        "goal": "修复问题",
+        "source_version": "sv-0001",
+        "input_refs": {
+          "source": "artifact-source-v1",
+          "acceptance_contract": "artifact-contract-1"
+        },
+        "acceptance_criteria": [
+          "生成候选补丁"
+        ]
+      },
+      "reason": "缺失 contract_version（版本必须固定且不能遗漏）"
+    },
+    "missing_acceptance_contract": {
+      "payload": {
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T102",
+        "attempt_id": "T102-A2",
+        "dispatch_batch_id": "B3",
+        "agent_id": "fixer",
+        "agent_version": "1.0",
+        "task_kind": "fix",
+        "goal": "修复问题",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "input_refs": {
+          "source": "artifact-source-v1"
+        },
+        "acceptance_criteria": [
+          "生成候选补丁"
+        ]
+      },
+      "reason": "input_refs 必须包含 acceptance_contract（指向冻结检查合同）"
+    },
+    "attempt_id_equals_task_id": {
+      "payload": {
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T102",
+        "attempt_id": "T102",
+        "dispatch_batch_id": "B3",
+        "agent_id": "fixer",
+        "agent_version": "1.0",
+        "task_kind": "fix",
+        "goal": "修复问题",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "input_refs": {
+          "source": "artifact-source-v1",
+          "acceptance_contract": "artifact-contract-1"
+        },
+        "acceptance_criteria": [
+          "生成候选补丁"
+        ]
+      },
+      "reason": "attempt_id 不能等于 task_id（尝试与逻辑任务分离）"
+    },
+    "no_acceptance_criteria": {
+      "payload": {
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T102",
+        "attempt_id": "T102-A1",
+        "dispatch_batch_id": "B1",
+        "agent_id": "fixer",
+        "agent_version": "1.0",
+        "task_kind": "fix",
+        "goal": "修复问题",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "input_refs": {
+          "source": "artifact-source-v1",
+          "acceptance_contract": "artifact-contract-1"
+        },
+        "acceptance_criteria": []
+      },
+      "reason": "派发至少需要一个验收条件"
+    }
+  },
+  "TaskResult": {
+    "fix_with_passed_true": {
+      "payload": {
+        "result_id": "R-T102-A1",
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T102",
+        "attempt_id": "T102-A1",
+        "dispatch_batch_id": "B2",
+        "agent_id": "fixer",
+        "agent_version": "1.0",
+        "task_kind": "fix",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "status": "completed",
+        "passed": true,
+        "summary": "已修复",
+        "started_at": "2026-10-08T02:00:00Z",
+        "finished_at": "2026-10-08T02:00:01Z"
+      },
+      "reason": "fix 结果必须保留 passed=null（补丁本身不是修复证据）"
+    },
+    "failed_without_error": {
+      "payload": {
+        "result_id": "R-T103-A1",
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T103",
+        "attempt_id": "T103-A1",
+        "dispatch_batch_id": "B2",
+        "agent_id": "verifier",
+        "agent_version": "1.0",
+        "task_kind": "verify",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "status": "failed",
+        "passed": null,
+        "summary": "执行失败",
+        "started_at": "2026-10-08T02:00:00Z",
+        "finished_at": "2026-10-08T02:00:01Z"
+      },
+      "reason": "执行失败必须携带结构化 error"
+    },
+    "failed_with_passed_false": {
+      "payload": {
+        "result_id": "R-T103-A1",
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T103",
+        "attempt_id": "T103-A1",
+        "dispatch_batch_id": "B2",
+        "agent_id": "verifier",
+        "agent_version": "1.0",
+        "task_kind": "verify",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "status": "failed",
+        "passed": false,
+        "summary": "执行失败但声称未通过",
+        "error": {
+          "code": "TOOL_ERROR",
+          "category": "tool_error",
+          "message": "工具崩溃"
+        },
+        "started_at": "2026-10-08T02:00:00Z",
+        "finished_at": "2026-10-08T02:00:01Z"
+      },
+      "reason": "执行失败时 passed 必须为 null（false 是业务结论，不能与执行失败混用）"
+    },
+    "completed_with_error": {
+      "payload": {
+        "result_id": "R-T103-A1",
+        "root_task_id": "T100",
+        "parent_task_id": "T100",
+        "task_id": "T103",
+        "attempt_id": "T103-A1",
+        "dispatch_batch_id": "B2",
+        "agent_id": "verifier",
+        "agent_version": "1.0",
+        "task_kind": "verify",
+        "source_version": "sv-0001",
+        "contract_version": "contract-1",
+        "status": "completed",
+        "passed": false,
+        "summary": "正常执行，发现失败",
+        "error": {
+          "code": "TOOL_ERROR",
+          "category": "tool_error",
+          "message": "不应出现"
+        },
+        "started_at": "2026-10-08T02:00:00Z",
+        "finished_at": "2026-10-08T02:00:01Z"
+      },
+      "reason": "正常完成不应携带执行错误（业务失败放在 passed/summary）"
+    }
+  },
+  "CheckResult": {
+    "behavior_pass_zero_tests": {
+      "payload": {
+        "check_id": "CHK-AVG-EMPTY",
+        "contract_version": "contract-1",
+        "source_version": "sv-0002",
+        "producer_attempt_id": "T103-A2",
+        "method": "behavior_test",
+        "status": "passed",
+        "evidence_refs": [
+          "artifact-test-output-2"
+        ],
+        "test_count": 0,
+        "passed_count": 0,
+        "failed_count": 0,
+        "skipped_count": 0,
+        "executed": true
+      },
+      "reason": "零收集测试不能判 passed"
+    },
+    "behavior_pass_all_skipped": {
+      "payload": {
+        "check_id": "CHK-AVG-EMPTY",
+        "contract_version": "contract-1",
+        "source_version": "sv-0002",
+        "producer_attempt_id": "T103-A2",
+        "method": "behavior_test",
+        "status": "passed",
+        "evidence_refs": [
+          "artifact-test-output-2"
+        ],
+        "test_count": 4,
+        "passed_count": 0,
+        "failed_count": 0,
+        "skipped_count": 4,
+        "executed": true
+      },
+      "reason": "全部跳过的测试不能判 passed"
+    },
+    "behavior_pass_with_failures": {
+      "payload": {
+        "check_id": "CHK-AVG-EMPTY",
+        "contract_version": "contract-1",
+        "source_version": "sv-0002",
+        "producer_attempt_id": "T103-A2",
+        "method": "behavior_test",
+        "status": "passed",
+        "evidence_refs": [
+          "artifact-test-output-2"
+        ],
+        "test_count": 3,
+        "passed_count": 2,
+        "failed_count": 1,
+        "skipped_count": 0,
+        "executed": true
+      },
+      "reason": "存在失败测试时不能判 passed"
+    },
+    "counts_do_not_sum": {
+      "payload": {
+        "check_id": "CHK-AVG-EMPTY",
+        "contract_version": "contract-1",
+        "source_version": "sv-0002",
+        "producer_attempt_id": "T103-A2",
+        "method": "behavior_test",
+        "status": "failed",
+        "test_count": 5,
+        "passed_count": 1,
+        "failed_count": 1,
+        "skipped_count": 0,
+        "executed": true
+      },
+      "reason": "passed+failed+skipped 必须等于 test_count"
+    },
+    "not_run_but_executed": {
+      "payload": {
+        "check_id": "CHK-SYNTAX",
+        "contract_version": "contract-1",
+        "source_version": "sv-0002",
+        "producer_attempt_id": "T103-A2",
+        "method": "syntax",
+        "status": "not_run",
+        "executed": true
+      },
+      "reason": "status=not_run 必须 executed=false"
+    },
+    "passed_without_evidence": {
+      "payload": {
+        "check_id": "CHK-SYNTAX",
+        "contract_version": "contract-1",
+        "source_version": "sv-0002",
+        "producer_attempt_id": "T103-A2",
+        "method": "syntax",
+        "status": "passed",
+        "evidence_refs": [],
+        "executed": true
+      },
+      "reason": "passed 检查必须附证据引用"
+    }
+  },
+  "Finding": {
+    "resolved_without_evidence": {
+      "payload": {
+        "finding_id": "F-1",
+        "root_task_id": "T100",
+        "source_version": "sv-0001",
+        "producer_attempt_id": "T101-A1",
+        "required_for_goal": true,
+        "file_path": "helpers.py",
+        "rule": "B006-mutable-default",
+        "message": "共享可变默认参数",
+        "status": "resolved"
+      },
+      "reason": "关闭必需问题必须有当前版本的复查/验证证据，仅凭修复声明不算"
+    }
+  },
+  "Patch": {
+    "diff_and_edits_together": {
+      "payload": {
+        "patch_id": "P-9",
+        "root_task_id": "T100",
+        "producer_attempt_id": "T102-A1",
+        "base_version": "sv-0001",
+        "format": "unified_diff",
+        "diff_text": "--- a/x.py\n+++ b/x.py\n",
+        "edits": [
+          {
+            "file_path": "x.py",
+            "find": "a",
+            "replace": "b"
+          }
+        ],
+        "rationale": "两种格式混用"
+      },
+      "reason": "必须选定一种主格式，不能同时携带 diff 与结构化片段"
+    },
+    "structured_without_edits": {
+      "payload": {
+        "patch_id": "P-9",
+        "root_task_id": "T100",
+        "producer_attempt_id": "T102-A1",
+        "base_version": "sv-0001",
+        "format": "structured_edits",
+        "rationale": "缺少修改片段"
+      },
+      "reason": "structured_edits 必须至少包含一个 edit"
+    }
+  },
+  "PatchApplication": {
+    "committed_without_result_version": {
+      "payload": {
+        "application_id": "PA-9",
+        "root_task_id": "T100",
+        "patch_id": "P-1",
+        "repair_attempt_id": "T102-A1",
+        "base_version": "sv-0001",
+        "status": "committed",
+        "idempotency_key": "apply:T100:P-1:sv-0001"
+      },
+      "reason": "已提交的应用必须记录 result_version"
+    },
+    "committed_same_version": {
+      "payload": {
+        "application_id": "PA-9",
+        "root_task_id": "T100",
+        "patch_id": "P-1",
+        "repair_attempt_id": "T102-A1",
+        "base_version": "sv-0001",
+        "result_version": "sv-0001",
+        "status": "committed",
+        "idempotency_key": "apply:T100:P-1:sv-0001"
+      },
+      "reason": "结果版本必须不同于基础版本（否则等于没有修改）"
+    },
+    "failed_without_error": {
+      "payload": {
+        "application_id": "PA-9",
+        "root_task_id": "T100",
+        "patch_id": "P-1",
+        "repair_attempt_id": "T102-A1",
+        "base_version": "sv-0001",
+        "status": "failed",
+        "idempotency_key": "apply:T100:P-1:sv-0001"
+      },
+      "reason": "失败的应用必须记录错误"
+    }
+  },
+  "VerificationReport": {
+    "passed_with_not_run_check": {
+      "payload": {
+        "verification_id": "V-9",
+        "root_task_id": "T100",
+        "producer_attempt_id": "T103-A2",
+        "source_version": "sv-0002",
+        "contract_version": "contract-1",
+        "check_results": [
+          {
+            "check_id": "CHK-AVG-EMPTY",
+            "contract_version": "contract-1",
+            "source_version": "sv-0002",
+            "producer_attempt_id": "T103-A2",
+            "method": "behavior_test",
+            "status": "not_run",
+            "executed": false,
+            "reason": "执行器不可用"
+          }
+        ],
+        "passed": true
+      },
+      "reason": "存在未执行检查时验证不能判 passed"
+    }
+  },
+  "ParentAction": {
+    "unknown_action": {
+      "payload": {
+        "action": "dispatch_test_generator",
+        "agent_id": "test_generator",
+        "reason": "为每个角色增加专用派发指令"
+      },
+      "reason": "不支持的动作必须被拒绝（新增角色也不能新增专用派发动作）"
+    },
+    "batch_single_item": {
+      "payload": {
+        "action": "dispatch_batch",
+        "tasks": [
+          {
+            "agent_id": "verifier",
+            "task_kind": "verify",
+            "goal": "验证",
+            "input_refs": {
+              "source": "artifact-source-v2",
+              "acceptance_contract": "artifact-contract-1"
+            },
+            "acceptance_criteria": [
+              "检查通过"
+            ],
+            "reason": "单独一项不构成批次"
+          }
+        ],
+        "reason": "批次至少两个独立分支"
+      },
+      "reason": "dispatch_batch 至少需要两个独立分支"
+    },
+    "batch_same_task_kind": {
+      "payload": {
+        "action": "dispatch_batch",
+        "tasks": [
+          {
+            "agent_id": "verifier",
+            "task_kind": "verify",
+            "goal": "验证 A",
+            "input_refs": {
+              "source": "artifact-source-v2",
+              "acceptance_contract": "artifact-contract-1"
+            },
+            "acceptance_criteria": [
+              "检查通过"
+            ],
+            "task_id": "T103",
+            "reason": "分支一"
+          },
+          {
+            "agent_id": "verifier",
+            "task_kind": "verify",
+            "goal": "验证 B",
+            "input_refs": {
+              "source": "artifact-source-v2",
+              "acceptance_contract": "artifact-contract-1"
+            },
+            "acceptance_criteria": [
+              "检查通过"
+            ],
+            "task_id": "T104",
+            "reason": "分支二"
+          }
+        ],
+        "reason": "两个同类分支不是复审+验证"
+      },
+      "reason": "并行批次必须包含不同的独立分支（如 verify + recheck）"
+    }
+  },
+  "TerminalRecord": {
+    "controller_completed": {
+      "payload": {
+        "attempt_id": "T103-A1",
+        "dispatch_batch_id": "B2",
+        "origin": "controller",
+        "outcome": "completed",
+        "result_id": "R-T103-A1",
+        "operation_key": "terminal:T100:T103-A1"
+      },
+      "reason": "控制层终态只能是 failed，不能生成 passed=true"
+    },
+    "agent_completed_without_result": {
+      "payload": {
+        "attempt_id": "T103-A1",
+        "dispatch_batch_id": "B2",
+        "origin": "agent",
+        "outcome": "completed",
+        "operation_key": "terminal:T100:T103-A1"
+      },
+      "reason": "agent 的 completed 终态必须关联 result_id"
+    }
+  },
+  "ExecutionEvent": {
+    "naive_timestamp": {
+      "payload": {
+        "event_id": "E-9",
+        "root_task_id": "T100",
+        "sequence": 1,
+        "timestamp": "2026-10-08T02:00:00",
+        "actor_id": "reviewer",
+        "event_type": "attempt_started",
+        "payload": {}
+      },
+      "reason": "事件时间必须带时区（统一存 UTC）"
+    }
+  },
+  "Artifact": {
+    "path_traversal": {
+      "payload": {
+        "artifact_id": "artifact-9",
+        "root_task_id": "T100",
+        "artifact_type": "evidence",
+        "storage_ref": "../../etc/passwd",
+        "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 1
+      },
+      "reason": "产物路径不能穿越数据目录"
+    }
+  },
+  "FileEntry": {
+    "absolute_path": {
+      "payload": {
+        "path": "/etc/hosts",
+        "size": 10,
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "reason": "上传/快照路径必须是相对路径"
+    },
+    "parent_traversal": {
+      "payload": {
+        "path": "../secret.py",
+        "size": 10,
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "reason": "拒绝目录穿越"
+    }
+  },
+  "AgentSpec": {
+    "base_task_kind_without_budget": {
+      "payload": {
+        "agent_id": "verifier",
+        "version": "1.0",
+        "description": "验证 Agent",
+        "supported_task_kinds": [
+          "verify"
+        ],
+        "tool_names": [],
+        "permissions": [],
+        "retry_budget": {}
+      },
+      "reason": "基础 task_kind 必须声明重试预算，不能落入无限重试分支"
+    }
+  },
+  "WorkflowConfig": {
+    "review_to_fix_edge": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "sequential",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0",
+          "verifier": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "review",
+            "target": "fix"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "verify",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ]
+      },
+      "reason": "不允许子节点直连（review→fix），回报路径只能回父 Agent"
+    },
+    "parallel_without_recheck": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "parallel",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0",
+          "verifier": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "verify",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ]
+      },
+      "reason": "并行模式必须包含复用 reviewer 的 recheck 节点"
+    },
+    "unknown_agent_reference": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "sequential",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "verify",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ]
+      },
+      "reason": "节点引用了未在 agents 中声明版本的 verifier"
+    },
+    "missing_verify_return": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "sequential",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0",
+          "verifier": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ]
+      },
+      "reason": "缺少 verify→parent 回报边"
+    },
+    "budget_over_cap": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "sequential",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0",
+          "verifier": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "verify",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ],
+        "budgets": {
+          "max_repair_rounds": 99
+        }
+      },
+      "reason": "预算超过服务端上限"
+    },
+    "recheck_in_sequential": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "sequential",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0",
+          "verifier": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "recheck",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "verify",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "recheck"
+          },
+          {
+            "source": "recheck",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ]
+      },
+      "reason": "顺序模式不能声明 recheck 节点"
+    },
+    "two_end_nodes": {
+      "payload": {
+        "schema_version": "1.0",
+        "check_mode": "sequential",
+        "agents": {
+          "parent": "1.0",
+          "reviewer": "1.0",
+          "fixer": "1.0",
+          "verifier": "1.0"
+        },
+        "nodes": [
+          {
+            "id": "parent",
+            "type": "parent",
+            "agent_id": "parent"
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "agent_id": "reviewer",
+            "task_kind": "review"
+          },
+          {
+            "id": "fix",
+            "type": "agent",
+            "agent_id": "fixer",
+            "task_kind": "fix"
+          },
+          {
+            "id": "verify",
+            "type": "agent",
+            "agent_id": "verifier",
+            "task_kind": "verify"
+          },
+          {
+            "id": "end",
+            "type": "end"
+          },
+          {
+            "id": "end2",
+            "type": "end"
+          }
+        ],
+        "edges": [
+          {
+            "source": "parent",
+            "target": "review"
+          },
+          {
+            "source": "review",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "fix"
+          },
+          {
+            "source": "fix",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "verify"
+          },
+          {
+            "source": "verify",
+            "target": "parent"
+          },
+          {
+            "source": "parent",
+            "target": "end"
+          }
+        ]
+      },
+      "reason": "只允许一个结束出口"
+    }
+  },
+  "CheckSpec": {
+    "static_rule_without_rule_ids": {
+      "payload": {
+        "check_id": "CHK-MUTABLE",
+        "goal_ref": "避免共享可变默认参数",
+        "scope": [
+          "helpers.py"
+        ],
+        "required": true,
+        "method": "static_rule",
+        "pass_condition": "不存在共享可变默认参数"
+      },
+      "reason": "static_rule 检查必须声明要评估的已注册规则 id，判定不能靠自由文本猜测"
+    }
+  }
+}

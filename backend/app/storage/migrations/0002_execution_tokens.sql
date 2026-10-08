@@ -1,0 +1,1 @@
+ALTER TABLE attempts ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0;

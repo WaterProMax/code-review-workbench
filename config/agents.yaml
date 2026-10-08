@@ -1,0 +1,61 @@
+# Agent registration defaults (ImplementationPlan §7.4, §14.1.1).
+# The registry registers implementations in code; this file declares which
+# fixed versions are enabled and what tool permissions the flow may grant.
+# Only the versions listed here may be referenced by a workflow config.
+schema_version: "1.0"
+
+agents:
+  parent:
+    version: "1.0"
+    description: 父 Agent：理解目标、建立任务树、派发、接收回报与检测、决定下一步
+    tool_names: []
+    permissions: [create_task, dispatch, apply_patch, terminate_child]
+
+  reviewer:
+    version: "1.0"
+    description: 审查 Agent：按约定检查项读取快照并生成 Finding
+    tool_names:
+      - list_files
+      - read_file
+      - ast_check
+      - search_code
+      - read_artifact
+      - run_checks
+    permissions: [read_workspace]
+
+  fixer:
+    version: "1.0"
+    description: 修复 Agent：依据问题与失败证据生成针对当前版本的候选补丁
+    tool_names:
+      - list_files
+      - read_file
+      - search_code
+      - read_artifact
+      - submit_patch
+    permissions: [read_workspace, produce_patch]
+
+  verifier:
+    version: "1.0"
+    description: 验证 Agent：执行约定检查与临时测试，返回实际证据
+    tool_names:
+      - list_files
+      - read_file
+      - ast_check
+      - search_code
+      - read_artifact
+      - save_evidence
+      - run_checks
+    permissions: [read_workspace, write_scratch]
+
+  # P10 extension sample: test generation role (registered in code, disabled by
+  # default). Enabled only through a workflow config that references it.
+  test_generator:
+    version: "1.0"
+    description: 测试生成 Agent：为可复现行为缺陷生成最小测试产物，供验证 Agent 使用
+    tool_names:
+      - list_files
+      - read_file
+      - search_code
+      - read_artifact
+      - save_evidence
+    permissions: [read_workspace, write_scratch]

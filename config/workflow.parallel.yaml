@@ -1,0 +1,50 @@
+# Parallel workflow template: post-patch recheck runs in the same batch as
+# verify (ImplementationPlan §10, §14.1.1). recheck reuses the reviewer role.
+schema_version: "1.0"
+check_mode: parallel
+workflow_version: workflow-parallel-1
+agents:
+  parent: "1.0"
+  reviewer: "1.0"
+  fixer: "1.0"
+  verifier: "1.0"
+nodes:
+  - id: parent
+    type: parent
+    agent_id: parent
+  - id: review
+    type: agent
+    agent_id: reviewer
+    task_kind: review
+  - id: fix
+    type: agent
+    agent_id: fixer
+    task_kind: fix
+  - id: apply
+    type: tool
+    tool_name: apply_patch
+  - id: verify
+    type: agent
+    agent_id: verifier
+    task_kind: verify
+  - id: recheck
+    type: agent
+    agent_id: reviewer
+    task_kind: review
+  - id: end
+    type: end
+edges:
+  - { source: parent, target: review }
+  - { source: review, target: parent }
+  - { source: parent, target: fix }
+  - { source: fix, target: parent }
+  - { source: parent, target: apply }
+  - { source: apply, target: parent }
+  - { source: parent, target: verify }
+  - { source: verify, target: parent }
+  - { source: parent, target: recheck }
+  - { source: recheck, target: parent }
+  - { source: parent, target: end }
+budgets:
+  max_repair_rounds: 2
+  max_verification_retries: 2

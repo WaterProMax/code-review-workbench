@@ -1,0 +1,56 @@
+# Extension template (ImplementationPlan §14.1.1, §14.2).
+# The sequential template plus a registered extension role: a test-generation node
+# whose artifact is dispatched to the verifier as an input dependency.
+# The input dependencies for the extension node come from the registered plugin
+# (app/extensions/test_generator.py), not from this file - which is why the saved
+# config shows them after expansion.
+schema_version: "1.0"
+check_mode: sequential
+workflow_version: workflow-extension-1
+agents:
+  parent: "1.0"
+  reviewer: "1.0"
+  fixer: "1.0"
+  verifier: "1.0"
+  test_generator: "1.0"
+nodes:
+  - id: parent
+    type: parent
+    agent_id: parent
+  - id: review
+    type: agent
+    agent_id: reviewer
+    task_kind: review
+  - id: gen
+    type: agent
+    agent_id: test_generator
+    task_kind: generate_tests
+  - id: fix
+    type: agent
+    agent_id: fixer
+    task_kind: fix
+  - id: apply
+    type: tool
+    tool_name: apply_patch
+  - id: verify
+    type: agent
+    agent_id: verifier
+    task_kind: verify
+  - id: end
+    type: end
+edges:
+  - { source: parent, target: review }
+  - { source: review, target: parent }
+  - { source: parent, target: gen }
+  - { source: gen, target: parent }
+  - { source: parent, target: fix }
+  - { source: fix, target: parent }
+  - { source: parent, target: apply }
+  - { source: apply, target: parent }
+  - { source: parent, target: verify }
+  - { source: verify, target: parent }
+  - { source: parent, target: end }
+budgets:
+  max_repair_rounds: 2
+  max_verification_retries: 2
+  max_generate_retries: 2

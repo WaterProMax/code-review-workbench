@@ -1,0 +1,45 @@
+# Sequential workflow template (ImplementationPlan §14.1.1).
+# Equivalent to the JSON sample in the plan; the graph builder expands standard
+# input dependencies and tool permissions when this config is saved.
+schema_version: "1.0"
+check_mode: sequential
+workflow_version: workflow-sequential-1
+agents:
+  parent: "1.0"
+  reviewer: "1.0"
+  fixer: "1.0"
+  verifier: "1.0"
+nodes:
+  - id: parent
+    type: parent
+    agent_id: parent
+  - id: review
+    type: agent
+    agent_id: reviewer
+    task_kind: review
+  - id: fix
+    type: agent
+    agent_id: fixer
+    task_kind: fix
+  - id: apply
+    type: tool
+    tool_name: apply_patch
+  - id: verify
+    type: agent
+    agent_id: verifier
+    task_kind: verify
+  - id: end
+    type: end
+edges:
+  - { source: parent, target: review }
+  - { source: review, target: parent }
+  - { source: parent, target: fix }
+  - { source: fix, target: parent }
+  - { source: parent, target: apply }
+  - { source: apply, target: parent }
+  - { source: parent, target: verify }
+  - { source: verify, target: parent }
+  - { source: parent, target: end }
+budgets:
+  max_repair_rounds: 2
+  max_verification_retries: 2

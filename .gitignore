@@ -1,0 +1,47 @@
+# --- secrets & local configuration ---
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+secrets*.yaml
+secrets*.yml
+
+# --- runtime data (business db, checkpoints, uploads, snapshots) ---
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- node / frontend ---
+node_modules/
+frontend/dist/
+.vite/
+
+# --- os / editor ---
+.DS_Store
+*.log
+.idea/
+.vscode/
