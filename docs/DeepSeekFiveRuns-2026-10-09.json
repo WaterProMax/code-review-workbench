@@ -1,0 +1,565 @@
+{
+  "tested_commit": "419ca1ef68cc24315f245bca3c008f851c6d3b51",
+  "backend_source_sha256": "5fa755f08f8d478f6fa0ca2661e37ded91499d7eaaa49d17ac6b249fdc4c3406",
+  "tested_at": "2026-10-09T13:10:22.365929+08:00",
+  "provider": "deepseek",
+  "requested_model": "deepseek-chat",
+  "returned_models": [
+    "deepseek-flash"
+  ],
+  "successful_model_calls": 128,
+  "usage": {
+    "prompt_tokens": 814630,
+    "completion_tokens": 54443,
+    "total_tokens": 869073
+  },
+  "connectivity_probe_tokens": 50,
+  "cases": [
+    {
+      "case": "clean",
+      "root_task_id": "T582f60e476",
+      "status": "completed",
+      "passed": true,
+      "elapsed_s": 20,
+      "checks": [
+        {
+          "check_id": "C1-syntax",
+          "goal_ref": "检查 stats.py 语法",
+          "method": "syntax",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-e1a4e2204fa8",
+          "source_version": "sv-671bc1e09895bec8cfe1e5f1395325ac",
+          "note": "1 个文件可解析（仅证明可解析，不证明行为正确）"
+        },
+        {
+          "check_id": "C2-mutable-default",
+          "goal_ref": "检查可变默认参数静态问题",
+          "method": "static_rule",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-ecf5a6cf56cd",
+          "source_version": "sv-671bc1e09895bec8cfe1e5f1395325ac",
+          "note": "['B006-mutable-default'] 在 1 个文件范围内无命中"
+        },
+        {
+          "check_id": "C3-bare-except",
+          "goal_ref": "检查吞异常静态问题",
+          "method": "static_rule",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-3e23eed47d49",
+          "source_version": "sv-671bc1e09895bec8cfe1e5f1395325ac",
+          "note": "['E722-bare-except'] 在 1 个文件范围内无命中"
+        },
+        {
+          "check_id": "C4-empty-input-valueerror",
+          "goal_ref": "确认 mean/median 空输入抛 ValueError 属正确行为",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-601bfd0c9939",
+          "source_version": "sv-671bc1e09895bec8cfe1e5f1395325ac",
+          "note": "3 项测试通过（3 passed in 0.00s）"
+        }
+      ],
+      "attempts": [
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-671bc1e09895bec8cfe1e5f1395325ac",
+          "result_summary": "审查结论 通过；问题 0 条；覆盖 5 项；审查 stats.py（sv-671bc1e09895bec8cfe1e5f1395325ac，唯一文件，1073 bytes）。已实际读取全文：mean/median 对空输入显式 raise ValueError（stats.py:11-12、19-20），running_total 每次调用新建 result 列表（stats.py:31-32）。C1 语法确定性检查通过；C2 无可变默认参数（所有函数参数均无默认值）；C3 全文无 try/except，不存在裸 except；C4 已生成 pytest 最小测试验证空输入抛 ValueError，符合接口约定，不作为缺陷。未发现任何问题，首次审查全部通过，无需修复与验证。"
+        }
+      ],
+      "artifact_count": 16
+    },
+    {
+      "case": "repairable",
+      "root_task_id": "T037652ed83",
+      "status": "completed",
+      "passed": true,
+      "elapsed_s": 55,
+      "checks": [
+        {
+          "check_id": "C1-syntax",
+          "goal_ref": "helpers.py 可被正常解析与导入",
+          "method": "syntax",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-b74ec75388c9",
+          "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+          "note": "1 个文件可解析（仅证明可解析，不证明行为正确）"
+        },
+        {
+          "check_id": "C2-mutable-default",
+          "goal_ref": "add_item 省略 items 参数时使用独立列表",
+          "method": "static_rule",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-555150dd8181",
+          "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+          "note": "['B006-mutable-default'] 在 1 个文件范围内无命中"
+        },
+        {
+          "check_id": "C3-add-item-behavior",
+          "goal_ref": "add_item 省略 items 时独立列表，显式传入时追加到该列表",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-28feb91f7053",
+          "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+          "note": "4 项测试通过（4 passed in 0.00s）；基础版本 sv-6886c53a8bdc88ac8f4a406c390aa830 上同一测试：2 failed, 2 passed in 0.03s"
+        },
+        {
+          "check_id": "C4-average-behavior",
+          "goal_ref": "average([]) 抛 ValueError，非空列表返回算术平均",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-081067b26765",
+          "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+          "note": "4 项测试通过（4 passed in 0.00s）；基础版本 sv-6886c53a8bdc88ac8f4a406c390aa830 上同一测试：2 failed, 2 passed in 0.03s"
+        },
+        {
+          "check_id": "C5-parse-port-behavior",
+          "goal_ref": "parse_port 仅接受 1..65535 的整数文本，非法输入抛 ValueError",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-4e32f0ed2574",
+          "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+          "note": "14 项测试通过（14 passed in 0.01s）；基础版本 sv-6886c53a8bdc88ac8f4a406c390aa830 上同一测试：12 failed, 2 passed in 0.04s"
+        }
+      ],
+      "attempts": [
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-6886c53a8bdc88ac8f4a406c390aa830",
+          "result_summary": "审查结论 未通过；问题 3 条；覆盖 4 项；审查 helpers.py（sv-6886c53a8bdc88ac8f4a406c390aa830，唯一文件，780 字节）。源码存在三处与目标相悖的缺陷：(1) add_item 使用可变默认参数 items=[]（helpers.py:10），导致省略 items 的多次调用共享同一列表；(2) average 直接 sum/len，空列表抛 ZeroDivisionError 而非 ValueError（helpers.py:16-18）；(3) parse_port 无范围/格式校验，非法输入返回 0 而非抛 ValueError（helpers.py:21-26）。C1 语法通过；C2 静态规则失败（B006）；C3/C4/C5 行为测试因执行器未接收测试输入而未运行，我已提供最小 pytest 测试包供执行器保存执行。当前版本未满足用户目标，需修复。"
+        },
+        {
+          "task_kind": "fix",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-6886c53a8bdc88ac8f4a406c390aa830",
+          "result_summary": "已生成候选补丁 P-ccd47bded3，等待应用与验证。已针对 helpers.py 的三个必需缺陷提交候选补丁 P-bda08c883b（base_version=sv-6886c53a8bdc88ac8f4a406c390aa830）。"
+        },
+        {
+          "task_kind": "verify",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+          "result_summary": "验证结论 通过（C1-syntax=passed, C2-mutable-default=passed, C3-add-item-behavior=passed, C4-average-behavior=passed, C5-parse-port-behavior=passed）。在修改版本 sv-d243172be6b288ed7f5e397a59b20038 上执行全部 5 项必需检查，均通过：C1 语法解析通过；C2 静态规则 B006-mutable-default 无命中；C3/C4/C5 行为测试分别 2/2/7 项全部通过。同一批行为测试在基础版本 sv-6886c53a8bdc88ac8f4a406c390aa830 上分别出现 1/1/6 项失败，证明缺陷真实存在且修复有效。无执行故障、无未运行项，结论 passed=true。"
+        }
+      ],
+      "artifact_count": 49
+    },
+    {
+      "case": "multi_file",
+      "root_task_id": "T27730e2781",
+      "status": "completed",
+      "passed": true,
+      "elapsed_s": 105,
+      "checks": [
+        {
+          "check_id": "C1-syntax",
+          "goal_ref": "审查 calculator 包",
+          "method": "syntax",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-2d50dce6350d",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "3 个文件可解析（仅证明可解析，不证明行为正确）"
+        },
+        {
+          "check_id": "C2-static-rules",
+          "goal_ref": "审查 calculator 包",
+          "method": "static_rule",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-9200bb9c9611",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "['B006-mutable-default', 'E722-bare-except', 'E711-compare-to-none'] 在 3 个文件范围内无命中"
+        },
+        {
+          "check_id": "C3-clamp-behavior",
+          "goal_ref": "修复 clamp(value,low,high)",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-1d85bd20f5cf",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "4 项测试通过（4 passed in 0.00s）；基础版本 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上同一测试：1 failed, 3 passed in 0.03s"
+        },
+        {
+          "check_id": "C4-safe-divide-behavior",
+          "goal_ref": "safe_divide 除零返回 None",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-710978eaae24",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "2 项测试通过（2 passed in 0.00s）；基础版本 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上同一测试：2 passed in 0.00s"
+        },
+        {
+          "check_id": "C5-format-ratio-behavior",
+          "goal_ref": "format_ratio 除零返回 n/a、正常格式两位小数",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-275c36550c50",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "2 项测试通过（2 passed in 0.00s）；基础版本 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上同一测试：2 passed in 0.00s"
+        },
+        {
+          "check_id": "C6-describe-score-behavior",
+          "goal_ref": "describe_score 先截断到 0..100 再分类，101 应为 excellent",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-8016ca67a6a1",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "3 项测试通过（3 passed in 0.00s）；基础版本 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上同一测试：3 passed in 0.00s"
+        },
+        {
+          "check_id": "C7-generated-tests",
+          "goal_ref": "生成行为测试证明缺陷并验证修复",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-8bbd099b9f4c",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "note": "5 项测试通过（5 passed in 0.01s）；基础版本 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上同一测试：1 failed, 4 passed in 0.03s"
+        },
+        {
+          "check_id": "C8-semantic-review",
+          "goal_ref": "审查 calculator 包",
+          "method": "model_review",
+          "required": false,
+          "status": "not_run",
+          "latest_evidence_ref": null,
+          "source_version": null,
+          "note": "未执行"
+        }
+      ],
+      "attempts": [
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-e9f0055de58424c042f7e9c788cab700",
+          "result_summary": "审查结论 未通过；问题 1 条；覆盖 4 项；审查 calculator 包（sv-e9f0055de58424c042f7e9c788cab700）。C1 语法与 C2 静态规则由执行器完成并通过。逐函数语义审查发现 clamp 存在明确缺陷：value > high 时返回 low 而非 high（calculator/core.py:20），导致 clamp(11,0,10)=0、clamp(5,10,0)=0，违反验收条件 C3。safe_divide、format_ratio、describe_score 实现与目标一致。C3-C7 的 behavior_test 因 run_checks 未接受内联测试内容而返回 not_run，已提交 5 个最小 pytest 测试包供执行器保存执行。"
+        },
+        {
+          "task_kind": "fix",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-e9f0055de58424c042f7e9c788cab700",
+          "result_summary": "已生成候选补丁 P-a416e54c57，等待应用与验证。修复 calculator/core.py 中 clamp 在 value > high 时错误返回 low 的缺陷，改为返回 high。"
+        },
+        {
+          "task_kind": "verify",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "result_summary": "验证结论 未通过（C1-syntax=passed, C2-static-rules=passed, C3-clamp-behavior=failed, C4-safe-divide-behavior=passed, C5-format-ratio-behavior=passed, C6-describe-score-behavior=passed, C7-generated-tests=failed）。在 source_version=sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上执行 7 项必需检查：C1 语法、C2 静态规则、C4 safe_divide、C5 format_ratio、C6 describe_score 通过；C3 clamp 与 C7 生成测试包失败。失败用例为 clamp(5,10,0)，实际返回 5，而验收条件 C3 明确要求返回 10（low>high 交换边界后超上界应返回 high）。该失败在修改后版本仍存在，属真实代码缺陷，故 passed=false。"
+        },
+        {
+          "task_kind": "fix",
+          "attempt_no": 2,
+          "status": "completed",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "result_summary": "已生成候选补丁 P-9ce09241a6，等待应用与验证。针对 finding F-28b3035333ce3ccaaf5d（clamp 上界行为）提交候选补丁 P-8439a62502，修改 calculator/core.py 的 clamp：low>high 交换边界后，区间内值返回交换后的 high，从而满足 clamp(5,10,0)==10；正常区间行为不变。"
+        },
+        {
+          "task_kind": "verify",
+          "attempt_no": 2,
+          "status": "completed",
+          "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+          "result_summary": "验证结论 通过（C1-syntax=passed, C2-static-rules=passed, C3-clamp-behavior=passed, C4-safe-divide-behavior=passed, C5-format-ratio-behavior=passed, C6-describe-score-behavior=passed, C7-generated-tests=passed）。修改后版本 calculator 包已审查：clamp 在 low>high 时交换边界并正确返回 high/low，safe_divide 除零返回 None，format_ratio 除零返回 'n/a' 且正常两位小数，describe_score 先 clamp 到 0..100 再分类。已编写最小复现测试覆盖 C3–C7，预期值来自验收条件 C3–C6 与接口合同。"
+        }
+      ],
+      "artifact_count": 87
+    },
+    {
+      "case": "parallel",
+      "root_task_id": "T5b4591b329",
+      "status": "completed",
+      "passed": true,
+      "elapsed_s": 45,
+      "checks": [
+        {
+          "check_id": "C1-b006-mutable-default",
+          "goal_ref": "建立必需静态规则 B006-mutable-default",
+          "method": "static_rule",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-8f25febacdce",
+          "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+          "note": "['B006-mutable-default'] 在 1 个文件范围内无命中"
+        },
+        {
+          "check_id": "C2-default-independent-list",
+          "goal_ref": "省略 items 时每次使用独立列表",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-a2a8f49ba675",
+          "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+          "note": "1 项测试通过（1 passed in 0.00s）"
+        },
+        {
+          "check_id": "C3-explicit-list-append",
+          "goal_ref": "保留显式传入列表的追加行为",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-b4f6bc2456fa",
+          "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+          "note": "2 项测试通过（2 passed in 0.00s）"
+        },
+        {
+          "check_id": "C4-syntax-valid",
+          "goal_ref": "修改后源码可正常解析",
+          "method": "syntax",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-3757f96c172c",
+          "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+          "note": "1 个文件可解析（仅证明可解析，不证明行为正确）"
+        }
+      ],
+      "attempts": [
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-6886c53a8bdc88ac8f4a406c390aa830",
+          "result_summary": "审查结论 未通过；问题 1 条；覆盖 3 项；审查 helpers.py（sv-6886c53a8bdc88ac8f4a406c390aa830）。add_item 定义在 helpers.py:10 使用可变默认参数 items=[]，静态规则 B006-mutable-default 命中（evidence-01acc1d7c7ee），C1 判定 failed。该缺陷导致省略 items 的连续调用共享同一默认列表，违反 C2 的独立列表要求；显式传入列表的追加语义（items.append(item); return items）本身保留，C3 预期通过。已为 C2、C3 各生成独立 pytest 最小测试（tests-24921c893a1b），执行器将自动执行。修复方向：将签名改为 items=None，函数体内 if items is None: items = []，保持显式传入列表的追加与返回语义不变。"
+        },
+        {
+          "task_kind": "fix",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-6886c53a8bdc88ac8f4a406c390aa830",
+          "result_summary": "已生成候选补丁 P-8a9b10caf8，等待应用与验证。将 helpers.py 中 add_item 的可变默认参数 items=[] 改为 items=None，并在函数体内按需初始化为新列表，消除跨调用共享默认列表的状态泄漏，同时保留显式传入列表的追加语义。"
+        },
+        {
+          "task_kind": "verify",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+          "result_summary": "验证结论 通过（C1-b006-mutable-default=passed, C2-default-independent-list=passed, C3-explicit-list-append=passed, C4-syntax-valid=passed）。修改后 helpers.py 的 add_item 已改为 items=None 并在函数体内 if items is None: items = []，保留 items.append(item); return items 的显式追加语义。复用 provided_tests 覆盖 C2/C3，C1 由 B006-mutable-default 静态规则检查，C4 由语法解析检查；执行器将在基础版本 sv-6886c53a8bdc88ac8f4a406c390aa830 与修改版本 sv-52d0249d1b15143b2e33bdd3fdcbc944 上并行运行同一测试以证明缺陷存在与修复通过。"
+        },
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+          "result_summary": "审查结论 通过；问题 0 条；覆盖 6 项；针对 sv-52d0249d1b15143b2e33bdd3fdcbc944 的 helpers.py 完成复审。实际读取 helpers.py 全文（739 bytes），add_item 定义位于 helpers.py:9-14，采用 items=None 哨兵并在函数体内 items = [] 初始化，已消除可变默认参数；省略 items 时每次调用获得独立列表，显式传入列表仍被原地追加并返回同一对象。C1 静态规则 B006-mutable-default 在 helpers.py 范围无命中（执行器通过）；C2、C3 行为测试执行器均通过，并已基于当前版本提供各自的最小复现测试。未发现需要修复的问题。"
+        }
+      ],
+      "artifact_count": 44
+    },
+    {
+      "case": "parallel_multi_file",
+      "root_task_id": "Tbd1c59003c",
+      "status": "completed",
+      "passed": true,
+      "elapsed_s": 60,
+      "checks": [
+        {
+          "check_id": "C1-syntax",
+          "goal_ref": "整体可运行性",
+          "method": "syntax",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-437b539d6c4b",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "3 个文件可解析（仅证明可解析，不证明行为正确）"
+        },
+        {
+          "check_id": "C2-clamp-swap",
+          "goal_ref": "clamp low>high 时交换边界",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-1144a2da3a62",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "3 项测试通过（3 passed in 0.00s）"
+        },
+        {
+          "check_id": "C3-clamp-bounds",
+          "goal_ref": "clamp 越界返回边界、范围内返回 value",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-35f1702f5020",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "3 项测试通过（3 passed in 0.00s）"
+        },
+        {
+          "check_id": "C4-describe-truncate",
+          "goal_ref": "describe_score 先截断到 0..100 再分类，101 为 excellent",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-c75da2257e00",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "4 项测试通过（4 passed in 0.00s）"
+        },
+        {
+          "check_id": "C5-existing-behavior",
+          "goal_ref": "不破坏已有正确行为",
+          "method": "behavior_test",
+          "required": true,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-e01e8ceca082",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "4 项测试通过（4 passed in 0.01s）；基础版本 sv-e9f0055de58424c042f7e9c788cab700 上同一测试：4 passed in 0.01s"
+        },
+        {
+          "check_id": "C6-static-rules",
+          "goal_ref": "代码质量与静态规则",
+          "method": "static_rule",
+          "required": false,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-788323b0d910",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "['B006-mutable-default', 'E722-bare-except', 'E711-compare-to-none'] 在 2 个文件范围内无命中"
+        },
+        {
+          "check_id": "C7-semantic-review",
+          "goal_ref": "语义确认 clamp 与 describe_score 实现符合目标",
+          "method": "model_review",
+          "required": false,
+          "status": "passed",
+          "latest_evidence_ref": "evidence-98fa2c408296",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "note": "clamp 在比较前交换 low/high，且超上界返回 high；describe_score 在分类前将分数截断到 0..100，101 归 excellent。逐条：core.py:12-13 `if low > high: low, high = high, low` 在比较前交换；core.py:14-15 `if value < low: return low`；core.py:16-17 `if value > high: return high`；core.py:18 `return value`。helpers.py:21 `bounded = clamp(score, 0, 100)` 先截断；helpers.py:22-25 再按 >=90/>=60 分类，故 101→100→excellent。"
+        }
+      ],
+      "attempts": [
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-e9f0055de58424c042f7e9c788cab700",
+          "result_summary": "审查结论 未通过；问题 2 条；覆盖 6 项；审查了冻结快照 sv-e9f0055de58424c042f7e9c788cab700 的全部 3 个文件（calculator/__init__.py、calculator/core.py、calculator/helpers.py）。语法检查（C1）与静态规则（C6）已由执行器通过。语义审查（C7）确认：clamp 确实在比较前交换了 low/high（core.py:14-15），但上界分支返回 low 而非 high（core.py:19-20），导致超上界值被错误映射到下界；describe_score 确实先调用 clamp(score,0,100) 再分类（helpers.py:20-26），但由于 clamp 的上界缺陷，101 会被 clamp 成 0 从而分类为 fail，而非目标要求的 excellent。因此 C2/C3/C4 在原版本必然失败，已生成对应最小 pytest 测试供执行器在原版本与修改后版本运行。"
+        },
+        {
+          "task_kind": "fix",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-e9f0055de58424c042f7e9c788cab700",
+          "result_summary": "已生成候选补丁 P-879d35e4f7，等待应用与验证。修复 calculator/core.py 中 clamp 的上界分支：`if value > high: return low` 改为 `return high`。helpers.py 的 describe_score 已依赖 clamp 截断，修复 clamp 后 describe_score(101) 截断为 100 返回 excellent，无需改动 helpers.py。"
+        },
+        {
+          "task_kind": "verify",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "result_summary": "验证结论 通过（C1-syntax=passed, C2-clamp-swap=passed, C3-clamp-bounds=passed, C4-describe-truncate=passed, C5-existing-behavior=passed, C6-static-rules=passed）。修改后版本 calculator/core.py 的 clamp 已修复：low>high 时交换边界，value<low 返回 low，value>high 返回 high，范围内返回 value；calculator/helpers.py 的 describe_score 通过 clamp(score,0,100) 先截断再分类，101 截断为 100 得 excellent。复用 provided_tests（tests-f31641557686）覆盖 C2/C3/C4/C5，预期值均来自验收标准 pass_condition，非被测程序输出。C1 语法检查由执行器对三文件解析。执行器将在基础版本 sv-e9f0055de58424c042f7e9c788cab700 上证明缺陷（clamp(15,0,10)=0、clamp(11,10,0)=0、describe_score(101)='fail'），在修改后版本 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e 上证明通过。"
+        },
+        {
+          "task_kind": "review",
+          "attempt_no": 1,
+          "status": "completed",
+          "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+          "result_summary": "审查结论 通过；问题 0 条；覆盖 6 项；审查 sv-13ebbb2d8d41ee647a2fedfd2fd4b36e：实际读取 calculator/__init__.py、calculator/core.py、calculator/helpers.py。clamp 在比较前交换 low/high（core.py:12-13），超下界返回 low（core.py:14-15），超上界返回 high（core.py:16-17），范围内返回 value（core.py:18），符合目标。describe_score 先调用 clamp(score,0,100) 截断再分类（helpers.py:21-25），101 截断为 100 归 excellent，符合目标。C1 语法与 C6 静态规则由执行器在修改后版本上通过。行为测试因快照内无测试文件而 not_run，已在 generated_tests 中为 C2/C3/C4/C5 各提供独立最小 pytest 测试，执行器将自动保存执行。未发现需要修复的缺陷。"
+        }
+      ],
+      "artifact_count": 58
+    }
+  ],
+  "verification": {
+    "artifact_hashes_checked": 254,
+    "cases": [
+      {
+        "case": "clean",
+        "source_version": "sv-671bc1e09895bec8cfe1e5f1395325ac",
+        "oracle_passed": 1,
+        "patch_count": 0
+      },
+      {
+        "case": "repairable",
+        "source_version": "sv-d243172be6b288ed7f5e397a59b20038",
+        "oracle_passed": 10,
+        "patch_count": 1
+      },
+      {
+        "case": "multi_file",
+        "source_version": "sv-198d1a5a4925b4853f6a9bc05bb3c25e",
+        "oracle_passed": 8,
+        "patch_count": 2
+      },
+      {
+        "case": "parallel",
+        "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+        "oracle_passed": 1,
+        "patch_count": 1
+      },
+      {
+        "case": "parallel_multi_file",
+        "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+        "oracle_passed": 8,
+        "patch_count": 1
+      }
+    ],
+    "parallel_batches": [
+      {
+        "case": "parallel",
+        "batch_id": "T5b4591b329-B3",
+        "source_version": "sv-52d0249d1b15143b2e33bdd3fdcbc944",
+        "attempts": [
+          {
+            "id": "T5b4591b329-C003-A1",
+            "started_at": "2026-10-09T05:13:51.203687Z",
+            "finished_at": "2026-10-09T05:13:57.555691Z"
+          },
+          {
+            "id": "T5b4591b329-C004-A1",
+            "started_at": "2026-10-09T05:13:51.212557Z",
+            "finished_at": "2026-10-09T05:14:05.900222Z"
+          }
+        ]
+      },
+      {
+        "case": "parallel_multi_file",
+        "batch_id": "Tbd1c59003c-B3",
+        "source_version": "sv-13ebbb2d8d41ee647a2fedfd2fd4b36e",
+        "attempts": [
+          {
+            "id": "Tbd1c59003c-C003-A1",
+            "started_at": "2026-10-09T05:14:49.513981Z",
+            "finished_at": "2026-10-09T05:15:01.019474Z"
+          },
+          {
+            "id": "Tbd1c59003c-C004-A1",
+            "started_at": "2026-10-09T05:14:49.523125Z",
+            "finished_at": "2026-10-09T05:15:03.990810Z"
+          }
+        ]
+      }
+    ],
+    "tool_errors": [
+      {
+        "case": "repairable",
+        "sequence": 15,
+        "tool": "run_checks",
+        "code": "TOOL_ERROR"
+      },
+      {
+        "case": "parallel",
+        "sequence": 61,
+        "tool": "run_checks",
+        "code": "TOOL_ERROR"
+      }
+    ],
+    "example_files_unchanged": 5,
+    "credential_scan_matches": 0
+  }
+}
