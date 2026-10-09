@@ -29,6 +29,7 @@ from app.schemas.enums import ArtifactType, CheckMethod, CheckStatus
 from app.schemas.results import CheckResult, CheckSpec
 from app.services.tools import static_rules
 from app.services.tools.common import require_path_in_scope
+from app.services.tools.check_scope import resolve_scope, scope_matches
 from app.services.tools.test_executor import (
     PytestOutcome,
     cleanup_execution_dir,
@@ -36,7 +37,7 @@ from app.services.tools.test_executor import (
     set_up_execution_dir,
 )
 
-EXECUTOR_VERSION = "1.0"
+EXECUTOR_VERSION = "1.1"
 GENERATED_TESTS_DIR = "_hw2_tests"
 
 
@@ -57,6 +58,20 @@ async def run_checks(ctx: ToolContext, args: RunChecksArgs) -> ToolResult:
     evidence_refs: list[str] = []
 
     for check in args.checks:
+        invalid_rules = sorted(set(check.rule_ids) - set(static_rules.RULE_IDS))
+        missing_scope = [s for s in check.scope if not scope_matches(s, all_files)]
+        no_python = (check.method in {CheckMethod.SYNTAX, CheckMethod.STATIC_RULE}
+                     and not any(p.endswith(".py") for p in _scope_files(check, all_files)))
+        if invalid_rules or missing_scope or no_python:
+            result = CheckResult(
+                check_id=check.check_id, contract_version=args.contract_version,
+                source_version=ctx.source_version,
+                producer_attempt_id=ctx.attempt_id or "unknown", method=check.method,
+                status=CheckStatus.NOT_RUN, executed=False,
+                reason=f"无法执行合同检查：未注册规则={invalid_rules}，未匹配范围={missing_scope}，范围内无 Python 文件={no_python}",
+            )
+            results.append(result)
+            continue
         if check.method is CheckMethod.SYNTAX:
             result, refs = _run_syntax(ctx, args, check, all_files)
         elif check.method is CheckMethod.STATIC_RULE:
@@ -127,7 +142,7 @@ def _run_syntax(
 ) -> tuple[CheckResult, list[str]]:
     import ast
 
-    files = _scope_files(check, all_files) or [f for f in all_files if f.endswith(".py")]
+    files = _scope_files(check, all_files)
     failures: list[dict] = []
     checked: list[str] = []
     for path in files:
@@ -174,7 +189,7 @@ def _run_syntax(
 def _run_static(
     ctx: ToolContext, args: RunChecksArgs, check: CheckSpec, all_files: list[str]
 ) -> tuple[CheckResult, list[str], list[dict]]:
-    files = _scope_files(check, all_files) or [f for f in all_files if f.endswith(".py")]
+    files = _scope_files(check, all_files)
     hits: list[dict] = []
     for path in files:
         if not path.endswith(".py"):
@@ -481,12 +496,7 @@ def _fault_for(check: CheckSpec, outcome: PytestOutcome) -> dict | None:
 # helpers
 # --------------------------------------------------------------------------- #
 def _scope_files(check: CheckSpec, all_files: list[str]) -> list[str]:
-    out: list[str] = []
-    for item in check.scope:
-        path = item.split(":")[0].strip()
-        if path and path in all_files and path not in out:
-            out.append(path)
-    return out
+    return resolve_scope(check.scope, all_files)
 
 
 def _is_test_file(path: str) -> bool:

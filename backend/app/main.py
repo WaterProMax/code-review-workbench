@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -16,6 +17,21 @@ from app.providers.base import LLMClient
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger("hw2")
+RECOVERY_SCAN_INTERVAL_SECONDS = 5.0
+
+
+async def _monitor_interrupted_runs(services) -> None:
+    while True:
+        await asyncio.sleep(RECOVERY_SCAN_INTERVAL_SECONDS)
+        try:
+            interrupted = services.governance.recovery.recover_incomplete_runs(
+                include_unleased_queued=False,
+                skip_root_ids=set(services.runner.running_ids()),
+            )
+            if interrupted:
+                logger.warning("marked interrupted after lease expiry: %s", interrupted)
+        except Exception:
+            logger.exception("interruption scan failed; will retry")
 
 
 def configure_logging(level: str) -> None:
@@ -41,9 +57,15 @@ def create_app(
         interrupted = services.governance.recovery.recover_incomplete_runs()
         if interrupted:
             logger.warning("marked interrupted after restart: %s", interrupted)
+        monitor = asyncio.create_task(_monitor_interrupted_runs(services))
         try:
             yield
         finally:
+            monitor.cancel()
+            try:
+                await monitor
+            except asyncio.CancelledError:
+                pass
             await services.runner.shutdown()
 
     app = FastAPI(

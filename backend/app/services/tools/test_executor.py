@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import os
 import re
+import selectors
 import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -24,7 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 MAX_OUTPUT_CHARS = 20000
-PYTEST_ARGS = ["-q", "-p", "no:cacheprovider", "--tb=short", "-rN"]
+MAX_OUTPUT_BYTES = 20000
+PYTEST_ARGS = ["-q", "-s", "-p", "no:cacheprovider", "--tb=short", "-rN"]
 
 
 @dataclass
@@ -75,35 +76,56 @@ def run_pytest(workdir: Path, target: list[str], timeout_seconds: float,
     env["PYTHONHASHSEED"] = "0"
     cmd = [sys.executable, "-m", "pytest", *PYTEST_ARGS, *target]
     timed_out = False
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    # Disable pytest's own file capture (-s). Drain pipes while the process is
+    # alive, keeping only a bounded tail; noisy tests never grow a capture file.
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(workdir), env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
+    except FileNotFoundError as exc:
+        return PytestOutcome(exit_code=-2, missing_dependency="pytest",
+                             summary_line=f"无法启动 pytest: {exc}", target=list(target))
+    tails = {"stdout": bytearray(), "stderr": bytearray()}
+    selector = selectors.DefaultSelector()
+    for stream, name in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+
+    def drain(timeout: float) -> None:
+        for key, _ in selector.select(timeout):
+            chunk = os.read(key.fileobj.fileno(), 65536)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            tail = tails[key.data]
+            tail.extend(chunk)
+            if len(tail) > MAX_OUTPUT_BYTES:
+                del tail[:-MAX_OUTPUT_BYTES]
+
+    deadline = time.monotonic() + max(timeout_seconds, 0.1)
+    try:
+        while proc.poll() is None:
+            if time.monotonic() >= deadline or (cancel_event and cancel_event.is_set()):
+                timed_out = True
+                break
+            drain(min(0.1, max(deadline - time.monotonic(), 0.001)))
+    finally:
+        # Reap descendants even if the session leader exited first.
         try:
-            proc = subprocess.Popen(cmd, cwd=str(workdir), env=env,
-                                    stdout=out, stderr=err, start_new_session=True)
-        except FileNotFoundError as exc:
-            return PytestOutcome(exit_code=-2, missing_dependency="pytest",
-                                 summary_line=f"无法启动 pytest: {exc}", target=list(target))
-        deadline = time.monotonic() + max(timeout_seconds, 0.1)
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
         try:
-            while proc.poll() is None:
-                if time.monotonic() >= deadline or (cancel_event and cancel_event.is_set()):
-                    timed_out = True
-                    break
-                try:
-                    proc.wait(timeout=min(0.1, max(deadline - time.monotonic(), 0.001)))
-                except subprocess.TimeoutExpired:
-                    pass
+            drain_deadline = time.monotonic() + 1.0
+            while selector.get_map() and time.monotonic() < drain_deadline:
+                drain(0.1)
         finally:
-            # The session leader may have exited while its descendants are still alive.
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait()
-        def read_tail(handle):
-            handle.seek(0, os.SEEK_END)
-            handle.seek(max(handle.tell() - MAX_OUTPUT_CHARS, 0))
-            return handle.read().decode("utf-8", errors="replace")
-        stdout, stderr = read_tail(out), read_tail(err)
+            selector.close()
+            proc.stdout.close()
+            proc.stderr.close()
+    stdout = _tail(bytes(tails["stdout"]))
+    stderr = _tail(bytes(tails["stderr"]))
     if timed_out:
         return PytestOutcome(exit_code=-1, timed_out=True,
                              summary_line=f"pytest 超时或已取消（期限 {timeout_seconds:.1f}s）",

@@ -226,34 +226,51 @@ class RecoveryCoordinator:
         result.source_version = latest.result_version
         return result
 
-    # ---- startup interruption scan ----------------------------------------
-    def recover_incomplete_runs(self, *, now: datetime | None = None) -> list[str]:
-        """Mark runs without a valid lease as ``interrupted`` and close orphans."""
+    # ---- interruption scan -------------------------------------------------
+    def recover_incomplete_runs(
+        self, *, now: datetime | None = None, include_unleased_queued: bool = True,
+        skip_root_ids: set[str] | None = None,
+    ) -> list[str]:
+        """Recheck expired leases atomically, including after a quick restart.
+
+        Periodic scans leave newly submitted, unleased queued tasks alone.
+        Re-reading under the write lock prevents racing a heartbeat or resume.
+        """
         now = now or datetime.now(timezone.utc)
         interrupted: list[str] = []
-        for root in self.repos.tasks.list_roots(limit=1000):
-            if root.status not in {s.value for s in ACTIVE_ROOT_STATUSES}:
+        for candidate in self.repos.tasks.list_active_roots():
+            if candidate.task_id in (skip_root_ids or set()):
                 continue
-            control = self.repos.controls.get(root.task_id)
-            if control is not None and control.lease_valid(now):
-                continue
-            self._close_orphan_attempts(root.task_id, control)
-            self.repos.tasks.update(
-                root.task_id,
-                status=RootStatus.INTERRUPTED.value,
-                passed=None,
-                passed_set=False,
-                bump_revision=True,
-            )
-            self.sink(root.task_id).emit(
-                EventType.TASK_INTERRUPTED,
-                payload={
-                    "reason": "进程中断：没有有效执行租约",
-                    "recoverable": True,
-                    "required_action": "确认后请求恢复原任务",
-                },
-            )
-            interrupted.append(root.task_id)
+            with self.repos.db.transaction() as conn:
+                root = self.repos.tasks.get(candidate.task_id, conn=conn)
+                if root is None or root.status not in {s.value for s in ACTIVE_ROOT_STATUSES}:
+                    continue
+                control = self.repos.controls.get(root.task_id, conn=conn)
+                if control is not None and control.lease_valid(now):
+                    continue
+                if (not include_unleased_queued and root.status == RootStatus.QUEUED.value
+                        and (control is None or control.lease_owner is None)):
+                    continue
+                self._close_orphan_attempts(root.task_id, control)
+                if control is not None:
+                    self.repos.controls.update(
+                        root.task_id, release_lease=True,
+                        fencing_token=control.fencing_token + 1,
+                        required_action="确认后请求恢复原任务", conn=conn,
+                    )
+                self.repos.tasks.update(
+                    root.task_id, status=RootStatus.INTERRUPTED.value,
+                    passed_set=False, bump_revision=True, conn=conn,
+                )
+                self.sink(root.task_id).emit(
+                    EventType.TASK_INTERRUPTED,
+                    payload={
+                        "reason": "进程中断：没有有效执行租约",
+                        "recoverable": True,
+                        "required_action": "确认后请求恢复原任务",
+                    },
+                )
+                interrupted.append(root.task_id)
         return interrupted
 
     def _close_orphan_attempts(self, root_task_id: str, control: Any) -> None:
@@ -354,7 +371,9 @@ class RecoveryCoordinator:
 
             record = self.repos.idempotency.get(operation_key, conn=conn)
             if record is not None:
-                if record["request_fingerprint"] != fingerprint:
+                if (record["request_fingerprint"] != fingerprint
+                        or record["root_task_id"] != root_task_id
+                        or record["operation_kind"] != "resume_task"):
                     raise ConflictError(
                         f"幂等键 {operation_key} 已用于不同的恢复请求"
                     )
@@ -465,7 +484,9 @@ class RecoveryCoordinator:
 
             record = self.repos.idempotency.get(operation_key, conn=conn)
             if record is not None:
-                if record["request_fingerprint"] != fingerprint:
+                if (record["request_fingerprint"] != fingerprint
+                        or record["root_task_id"] != root_task_id
+                        or record["operation_kind"] != "terminate_task"):
                     raise ConflictError(f"幂等键 {operation_key} 已用于不同的终止请求")
                 return TerminateOutcome(
                     root_task_id=root_task_id,
@@ -522,16 +543,34 @@ class RecoveryCoordinator:
             )
             self.repos.controls.update(root_task_id, required_action="", conn=conn)
 
-        skipped = self.controller.finalize_skips(root_task_id=root_task_id, passed=passed)
-        self.sink(root_task_id).emit(
-            EventType.TASK_INTERRUPTED,
-            payload={
-                "terminated": True,
-                "reason": request.reason,
-                "final_status": final_status,
-                "passed": passed,
-            },
-        )
+            # Report, skipped children, final state and idempotency record commit
+            # together. A failure cannot leave a final task without its report.
+            skipped = self.controller.finalize_skips(root_task_id=root_task_id, passed=passed)
+            row = self.repos.contracts.latest(root_task_id, conn=conn)
+            contract = AcceptanceContract.model_validate(
+                self.artifacts.read_json(row["artifact_id"])
+            ) if row else None
+            source_version = self.current_source_version(root_task_id)
+            latest = self.detector.current_checks(root_task_id, source_version) if source_version else {}
+            not_run = [c.check_id for c in contract.checks
+                       if c.check_id not in latest or latest[c.check_id].status.value in {"not_run", "inconclusive"}] if contract else ["检查合同尚未建立"]
+            workflow = self.repos.workflows.get(root.workflow_version)
+            _report, report_ref = self.controller.build_report(
+                root_task_id=root_task_id, workflow=workflow, workflow_version=root.workflow_version,
+                contract=contract, source_version=source_version, status=final_status,
+                passed=passed, goal=root.goal,
+                conclusion_scope=f"用户终止任务：{request.reason}；结论仅依据终止前已有证据",
+                unresolved=[f.finding_id for f in self.detector.open_required_findings(root_task_id)],
+                not_run=not_run, skipped=skipped,
+                execution_summary={"terminated": True, "termination_reason": request.reason,
+                                   "attempts": len(self.repos.attempts.list_by_root(root_task_id))},
+            )
+            self.sink(root_task_id).emit(
+                EventType.TASK_COMPLETED,
+                payload={"terminated": True, "reason": request.reason,
+                         "final_status": final_status, "passed": passed, "report_ref": report_ref},
+                artifact_refs=[report_ref],
+            )
         return TerminateOutcome(
             root_task_id=root_task_id,
             status=final_status,
@@ -596,7 +635,8 @@ class RecoveryCoordinator:
         attempts = self.repos.attempts.list_by_root(root_task_id)
         if attempts:
             return attempts[-1].source_version
-        return None
+        snapshots = self.artifacts.list_by_root(root_task_id, ArtifactType.SOURCE_SNAPSHOT)
+        return snapshots[-1].source_version if snapshots else None
 
     def _verdict_for_termination(self, root_task_id: str, *, conn=None) -> bool | None:  # type: ignore[no-untyped-def]
         row = self.repos.contracts.latest(root_task_id, conn=conn)

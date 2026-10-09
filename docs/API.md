@@ -116,6 +116,8 @@ curl -s -X POST http://127.0.0.1:8000/api/tasks/T-…/resume \
 判定不通过时结果为 `completed`/`false`，证据不足为 `partial`/`null`。与 resume 竞争只有一个生效，
 终态任务再次 resume/terminate 返回 409 `NOT_RESUMABLE`。
 
+成功终止同时生成最终报告，随后 `GET /api/tasks/{root_task_id}/report` 可查询，返回的 `report_artifact_id` 可下载。报告包含终止原因、已有证据与缺失项；报告保存失败时不提交最终状态。原幂等键与原请求重复终止返回原操作结果，不再生成报告；使用新键终止最终态仍返回 409。
+
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/tasks/T-…/terminate \
   -H 'Idempotency-Key: term-1' -H 'Content-Type: application/json' \
@@ -156,10 +158,10 @@ curl -s http://127.0.0.1:8000/api/workflows/templates \
 | 情形 | 响应 |
 |---|---|
 | 提交重试同键同内容 | 202，同一 `root_task_id` |
-| 提交/恢复同键异内容 | 409 `IDEMPOTENCY_CONFLICT` |
+| 提交/恢复/终止同键异内容，或恢复/终止跨任务及跨操作复用 | 409 `IDEMPOTENCY_CONFLICT` |
 | `check_mode` 与工作流不一致 | 409 `CONFIG_MODE_CONFLICT` |
 | 画布保存非法配置（未注册类型/角色） | 400 `VALIDATION_ERROR`，`details` 带 `node_id`/`field` |
 | 恢复额度超服务器上限 / 未声明重试种类 | 409 `BUDGET_EXHAUSTED`，不产生任何部分写入 |
 | 终态任务再次 resume/terminate | 409 `NOT_RESUMABLE` |
 | 未配置模型密钥 | 503 `MODEL_NOT_CONFIGURED`（不创建任务、不静默降级） |
-| 中断恢复 | 服务启动扫描失去有效租约的运行标 `interrupted`；`POST /resume` 重新取得执行权后从检查点续跑 |
+| 中断恢复 | 启动扫描并每 5 秒复查失效租约，标 `interrupted`；`POST /resume` 重新取得执行权后从检查点续跑 |

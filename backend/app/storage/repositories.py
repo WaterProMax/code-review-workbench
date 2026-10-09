@@ -166,6 +166,13 @@ class TaskRepository(BaseRepo):
         with self._tx(conn) as c:
             return int(c.execute("SELECT COUNT(*) AS n FROM tasks WHERE task_level='root'").fetchone()["n"])
 
+    def list_active_roots(self) -> list[Task]:
+        with self.db.reader() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE task_level='root' AND status IN ('queued', 'running')"
+            ).fetchall()
+        return [_row_to_task(row) for row in rows]
+
     def update(
         self,
         task_id: str,
@@ -1157,14 +1164,16 @@ class IdempotencyRepository(BaseRepo):
     ) -> bool:
         """Insert if absent; returns True when newly recorded.
 
-        An existing key with a different fingerprint is a conflict.
+        A different fingerprint, operation or explicitly supplied root conflicts.
         """
         with self._tx(conn) as c:
             row = c.execute(
                 "SELECT * FROM idempotency_records WHERE operation_key = ?", (operation_key,)
             ).fetchone()
             if row is not None:
-                if row["request_fingerprint"] != request_fingerprint:
+                if (row["request_fingerprint"] != request_fingerprint
+                        or row["operation_kind"] != operation_kind
+                        or (root_task_id is not None and row["root_task_id"] != root_task_id)):
                     raise ConflictError(
                         f"operation key {operation_key} was already used with different content"
                     )

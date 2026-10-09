@@ -1,5 +1,7 @@
 # HW2 综合验收与测试矩阵（P11）
 
+> **2026-10-09 后端回归**：对照实施计划检查后端架构，修复总任务初始化入口归属和 7 项后端缺陷。新增 17 个回归用例，执行 `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider` → **233 passed in 24.98s**。覆盖未知规则/通配符、实际 lifespan 中的延后租约失效、跨任务/操作幂等键、两个独立事件循环并发提交、8 MiB 测试输出、HTTP 人工终止报告、证据不足及报告失败回滚。详细架构映射和证据见 [后端架构核查记录](BackendArchitectureAudit-2026-10-09.md)。本轮没有调用真实 DeepSeek 或重测前端；下文模型与浏览器结论属于对应日期的历史验收。
+
 > 最新浏览器联调追加记录：修复布局、画布反馈和恢复后的旧拒绝反馈问题，后端全量 **216 passed**、前端 **13 passed**、生产构建通过；通过页面完成真实并行任务与恢复任务。详见 [前端浏览器联调记录](FrontendTest-2026-10-08.md)。下文 215 项为上一轮修复的历史统计。
 
 本文记录 ImplementationPlan §15 的验收执行情况：每个必须通过的场景（A01–A37）的输入、
@@ -15,7 +17,7 @@
 ```bash
 cd backend
 uv sync --dev
-uv run pytest -q                      # 全量；本次 215 passed
+uv run pytest -q                      # 全量；2026-10-09 为 233 passed
 uv run pytest tests/e2e -q            # HTTP 与验收场景
 uv run pytest -q --collect-only       # 列出全部用例 id
 ```

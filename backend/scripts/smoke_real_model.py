@@ -31,7 +31,7 @@ async def main():
     from app.main import create_app
     from app.settings import Settings
     from httpx import AsyncClient, ASGITransport
-    settings = Settings(data_dir=data_dir, model_api_key=key, log_level='warning')
+    settings = Settings(_env_file=None, data_dir=data_dir, model_api_key=key, log_level='warning')
     logging.getLogger('httpx').setLevel(logging.WARNING)
     calls = []
     class MeasuredDeepSeekClient(DeepSeekClient):
@@ -56,6 +56,7 @@ async def main():
       ('repairable','repairable','sequential','审查并修复 helpers.py：add_item 每次省略 items 参数时应使用独立列表，显式传入列表时追加到该列表；average([]) 必须抛 ValueError，非空列表返回算术平均；parse_port 仅接受整数文本且范围为 1..65535，空字符串、非整数、越界均抛 ValueError。必须生成真实行为测试验证，不能只做语法检查。'),
       ('multi_file','multi_file','sequential','审查 calculator 包并修复 clamp(value,low,high)：low>high 时交换边界，超下界返回 low，超上界返回 high，范围内返回 value。safe_divide 除零返回 None；format_ratio 除零返回 n/a、正常格式两位小数；describe_score 分数先截断到 0..100 再分类，101 应为 excellent。生成行为测试证明缺陷并验证修复。'),
       ('parallel','repairable','parallel','检查并修复 helpers.py 的可变默认参数 add_item，省略 items 时每次使用独立列表，保留显式传入列表的追加行为；针对这个目标建立必需静态规则 B006-mutable-default。修改后在同一源码版本并行复审和验证，并收齐两个分支后再结束。其他功能不在本次目标范围内。'),
+      ('parallel_multi_file','multi_file','parallel','审查并修复 calculator/core.py 的 clamp(value,low,high)：low>high 时交换边界，超下界返回 low，超上界返回 high，范围内返回 value；calculator/helpers.py 的 describe_score 应先截断到 0..100 再分类，101 应为 excellent。生成同一组真实行为测试，在原版本证明缺陷，在修改后版本证明修复并检查已有正确行为。修改后同一源码版本并行复审和验证，两个分支都回报后才能结束；并行和收齐要求写入 execution_requirements，不能作为源码检查项。'),
     ]
     if '--cases' in sys.argv:
         selected = set(sys.argv[sys.argv.index('--cases') + 1].split(','))

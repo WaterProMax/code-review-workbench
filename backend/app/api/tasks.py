@@ -1,7 +1,7 @@
 """Task submission, query, resume, terminate and report endpoints (§12.1).
 
-The submit endpoint mints the root task id through the controlled creation
-service (never the client), freezes the uploaded input as the first immutable
+The submit endpoint calls the parent's controlled initialization entry,
+which freezes the uploaded input as the first immutable
 snapshot, and returns 202 while a background run drives the graph.
 """
 
@@ -34,13 +34,11 @@ from app.schemas.enums import (
     ArtifactType,
     BudgetKind,
     CheckStatus,
-    EventType,
     RootStatus,
     TaskLevel,
 )
 from app.schemas.results import AcceptanceContract, CheckSummary, DetectionResult, Finding
 from app.services.execution_locks import request_fingerprint
-from app.services.task_creation import TaskCreationService
 from app.storage.repositories import ConflictError
 
 router = APIRouter(tags=["tasks"])
@@ -161,7 +159,8 @@ async def submit_task(
 
     existing = svc.repos.idempotency.get(key)
     if existing is not None:
-        if existing["request_fingerprint"] != fingerprint:
+        if (existing["request_fingerprint"] != fingerprint
+                or existing["operation_kind"] != "submit_task"):
             raise AppError(ErrorCode.IDEMPOTENCY_CONFLICT, f"幂等键 {key} 已用于不同的提交请求")
         root = _root_or_404(svc, existing["response_ref"] or "")
         return _submit_response(svc, root.task_id)
@@ -176,42 +175,24 @@ async def submit_task(
         )
     svc.runner.ensure_model_ready()
 
-    creator = TaskCreationService(svc.repos)
-    root_task_id = creator.new_root_task_id()
-    root = creator.create_root(
-        goal=payload.goal,
-        workflow_version=payload.workflow_version,
-        root_task_id=root_task_id,
-    )
-    manifest = svc.workspace.publish_initial_snapshot(
-        root_task_id=root_task_id, source_id=payload.source_id
-    )
-    source_artifact = svc.workspace.register_source_artifact(
-        root_task_id=root_task_id, source_version=manifest.source_version
-    )
-    svc.repos.uploads.attach_root(payload.source_id, root_task_id)
-    svc.repos.idempotency.put(
-        operation_key=key,
-        operation_kind="submit_task",
-        request_fingerprint=fingerprint,
-        response_ref=root_task_id,
-        root_task_id=root_task_id,
-    )
-    svc.governance.recovery.sink(root_task_id, "task_service").emit(
-        EventType.TASK_CREATED,
-        payload={
-            "goal": payload.goal,
-            "workflow_version": payload.workflow_version,
-            "source_id": payload.source_id,
-            "source_version": manifest.source_version,
-        },
-    )
+    try:
+        root, source_version, source_artifact, reused = svc.governance.controller.initialize_task(
+            source_id=payload.source_id, goal=payload.goal,
+            workflow_version=payload.workflow_version,
+            operation_key=key, fingerprint=fingerprint,
+        )
+    except ConflictError as exc:
+        raise AppError(ErrorCode.IDEMPOTENCY_CONFLICT, str(exc)) from exc
+    root_task_id = root.task_id
+    if reused:
+        return _submit_response(svc, root_task_id)
+    assert source_version is not None and source_artifact is not None
     await svc.runner.start_task(
         root_task_id=root_task_id,
         goal=payload.goal,
         workflow_version=payload.workflow_version,
         check_mode=workflow.check_mode.value,
-        source_version=manifest.source_version,
+        source_version=source_version,
         source_artifact=source_artifact,
     )
     return _submit_response(svc, root_task_id)

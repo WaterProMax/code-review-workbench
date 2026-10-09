@@ -58,8 +58,10 @@ from app.services.events import EventSink
 from app.services.task_creation import TaskCreationService
 from app.services.task_service import TaskService
 from app.services.workspace import WorkspaceService
+from app.services.tools.check_scope import scope_matches
+from app.services.tools.static_rules import RULE_IDS
 from app.settings import Settings
-from app.storage.repositories import Repos
+from app.storage.repositories import ConflictError, Repos
 from app.workflow.detection import Detector
 
 DEFAULT_NODE_FOR_KIND = {
@@ -146,6 +148,46 @@ class ParentController:
         return EventSink(self.repos.events, EventContext(root_task_id=root_task_id, actor_id=actor))
 
     # ---- planning / contract ----------------------------------------------
+    def initialize_task(
+        self, *, source_id: str, goal: str, workflow_version: str,
+        operation_key: str, fingerprint: str,
+    ) -> tuple[Task, str | None, str | None, bool]:
+        """Parent initialization entry: atomically create one task per request.
+
+        The API supplies inputs; only this entry invokes the controlled ID tool.
+        SQLite serializes competing submissions before any task is created.
+        """
+        with self.repos.db.transaction() as conn:
+            existing = self.repos.idempotency.get(operation_key, conn=conn)
+            if existing is not None:
+                if (existing["request_fingerprint"] != fingerprint
+                        or existing["operation_kind"] != "submit_task"):
+                    raise ConflictError("幂等键已用于不同的任务提交或操作")
+                root = self.repos.tasks.get(existing["root_task_id"], conn=conn)
+                if root is None:
+                    raise ConflictError("幂等记录的总任务不存在")
+                return root, None, None, True
+            root = TaskCreationService(self.repos).create_root(
+                goal=goal, workflow_version=workflow_version, conn=conn,
+            )
+            manifest = self.workspace.publish_initial_snapshot(
+                root_task_id=root.task_id, source_id=source_id,
+            )
+            source_artifact = self.workspace.register_source_artifact(
+                root_task_id=root.task_id, source_version=manifest.source_version,
+            )
+            self.repos.uploads.attach_root(source_id, root.task_id)
+            self.repos.idempotency.put(
+                operation_key=operation_key, operation_kind="submit_task",
+                request_fingerprint=fingerprint, response_ref=root.task_id,
+                root_task_id=root.task_id, conn=conn,
+            )
+            self.sink(root.task_id).emit(EventType.TASK_CREATED, payload={
+                "goal": goal, "workflow_version": workflow_version,
+                "source_id": source_id, "source_version": manifest.source_version,
+            })
+            return root, manifest.source_version, source_artifact, False
+
     def validate_plan(
         self, checks: Iterable[CheckSpec], *, goal: str, files: Iterable[str]
     ) -> list[str]:
@@ -197,12 +239,15 @@ class ParentController:
 
         known_files = set(files)
         for check in checks:
+            if check.method is CheckMethod.STATIC_RULE:
+                unknown_rules = sorted(set(check.rule_ids) - set(RULE_IDS))
+                if unknown_rules:
+                    problems.append(f"检查 {check.check_id} 使用未注册的静态规则：{unknown_rules}；可用规则：{list(RULE_IDS)}")
             runtime_goal = check.goal_ref + " " + check.pass_condition
             if (any(word in runtime_goal for word in ("并行复审", "并行审查", "并行验证", "分支均", "收齐", "dispatch_batch"))
                     and any(word in runtime_goal for word in ("版本", "分支", "回报", "派发"))):
                 problems.append(f"检查 {check.check_id} 是工作流运行要求，请移至 execution_requirements；不得用源码 behavior_test 验证分支派发/收齐。")
-            scope = [s.split(":")[0].strip() for s in check.scope]
-            unknown = [s for s in scope if s and s not in known_files and "*" not in s]
+            unknown = [s for s in check.scope if not scope_matches(s, known_files)]
             if unknown:
                 problems.append(
                     f"检查 {check.check_id} 的范围引用了不存在的文件：{sorted(unknown)}"
@@ -651,9 +696,9 @@ class ParentController:
         self,
         *,
         root_task_id: str,
-        workflow: WorkflowConfig,
-        contract: AcceptanceContract,
-        source_version: str,
+        workflow: WorkflowConfig | None,
+        contract: AcceptanceContract | None,
+        source_version: str | None,
         status: str,
         passed: bool | None,
         goal: str,
@@ -662,10 +707,13 @@ class ParentController:
         not_run: list[str],
         skipped: list[dict[str, str]],
         execution_summary: dict[str, Any],
+        workflow_version: str | None = None,
     ) -> tuple[FinalReport, str]:
-        latest = self.detector.current_checks(root_task_id, source_version)
+        latest = self.detector.current_checks(root_task_id, source_version) if source_version else {}
+        contract_version = contract.contract_version if contract else None
+        workflow_version = (workflow.workflow_version if workflow else workflow_version) or ""
         checks: list[CheckSummary] = []
-        for spec in contract.checks:
+        for spec in contract.checks if contract else []:
             result = latest.get(spec.check_id)
             checks.append(
                 CheckSummary(
@@ -687,17 +735,17 @@ class ParentController:
             goal=goal,
             conclusion_scope=conclusion_scope,
             source_version=source_version,
-            workflow_version=workflow.workflow_version or "",
-            contract_version=contract.contract_version,
+            workflow_version=workflow_version,
+            contract_version=contract_version,
             checks=checks,
             unresolved_finding_ids=unresolved,
             not_run_items=not_run,
             skipped_tasks=skipped,
-            versions={
-                "workflow_version": workflow.workflow_version or "",
-                "contract_version": contract.contract_version,
+            versions={key: value for key, value in {
+                "workflow_version": workflow_version,
+                "contract_version": contract_version,
                 "source_version": source_version,
-            },
+            }.items() if value is not None},
             execution_summary=execution_summary,
         )
         artifact = self.artifacts.save_json(
