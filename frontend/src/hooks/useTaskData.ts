@@ -7,6 +7,7 @@ import {
   listAttempts,
   listEvents,
   listFindings,
+  taskStreamUrl,
 } from "../api/client";
 import type {
   ArtifactView,
@@ -23,6 +24,8 @@ import type {
 
 const TERMINAL = new Set(["completed", "partial", "failed"]);
 
+export type StreamMode = "idle" | "streaming" | "polling";
+
 export interface TaskData {
   detail: TaskDetailResponse | null;
   events: ExecutionEvent[];
@@ -36,7 +39,20 @@ export interface TaskData {
   verifications: VerificationArtifact[];
   error: string | null;
   loading: boolean;
+  updatedAt: number | null;
+  streamStatus: StreamMode;
   refresh: () => void;
+}
+
+function parseStreamEvent(raw: unknown): ExecutionEvent | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const data = JSON.parse(raw) as ExecutionEvent;
+    if (!data || typeof data.event_id !== "string" || typeof data.sequence !== "number") return null;
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 /** Only the reviewer's coverage notes live in the artifact; the findings themselves are DB rows. */
@@ -55,15 +71,25 @@ async function loadCoverage(artifacts: ArtifactView[]) {
   return coverage;
 }
 
-async function loadArtifactBodies(artifacts: ArtifactView[]) {
+const POLL_MS = 1500;
+
+async function cachedArtifact<T>(cache: Map<string, unknown>, item: ArtifactView): Promise<T> {
+  const hit = cache.get(item.artifact_id);
+  if (hit !== undefined) return hit as T;
+  const body = await getArtifact<T>(item.artifact_id);
+  cache.set(item.artifact_id, body);
+  return body;
+}
+
+async function loadArtifactBodies(artifacts: ArtifactView[], cache: Map<string, unknown>) {
   const pick = (type: string) => artifacts.filter((item) => item.artifact_type === type);
   const [patches, applications, verifications] = await Promise.all([
-    Promise.all(pick("patch").map((item) => getArtifact<PatchArtifact>(item.artifact_id))),
+    Promise.all(pick("patch").map((item) => cachedArtifact<PatchArtifact>(cache, item))),
     Promise.all(
-      pick("patch_application").map((item) => getArtifact<PatchApplicationArtifact>(item.artifact_id)),
+      pick("patch_application").map((item) => cachedArtifact<PatchApplicationArtifact>(cache, item)),
     ),
     Promise.all(
-      pick("verification_report").map((item) => getArtifact<VerificationArtifact>(item.artifact_id)),
+      pick("verification_report").map((item) => cachedArtifact<VerificationArtifact>(cache, item)),
     ),
   ]);
   return { patches, applications, verifications };
@@ -84,11 +110,19 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
   }>({ findings: [], findingsCoverage: [], patches: [], applications: [], verifications: [] });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [streamStatus, setStreamStatus] = useState<StreamMode>("idle");
   const cursor = useRef(0);
   const timer = useRef<number | null>(null);
   const tickRef = useRef<(() => Promise<void>) | null>(null);
   const seen = useRef<Set<string>>(new Set());
   const backoff = useRef(1000);
+  const artifactCache = useRef(new Map<string, unknown>());
+  const inFlight = useRef(false);
+  const activeRef = useRef(false);
+  const lastOk = useRef(0);
+  const streamRef = useRef<EventSource | null>(null);
+  const streamWanted = useRef(true);
 
   const stop = useCallback(() => {
     if (timer.current !== null) {
@@ -97,8 +131,8 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     }
   }, []);
 
-  const load = useCallback(async () => {
-    if (!rootTaskId) return;
+  const load = useCallback(async (): Promise<{ status: string; ok: boolean }> => {
+    if (!rootTaskId) return { status: "queued", ok: false };
     try {
       const [nextDetail, nextAttempts, nextArtifacts, nextEvents, nextFindings] = await Promise.all([
         getTask(rootTaskId),
@@ -120,7 +154,7 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
       cursor.current = Math.max(cursor.current, nextEvents.next_seq);
       const [coverage, loaded] = await Promise.all([
         loadCoverage(nextArtifacts),
-        loadArtifactBodies(nextArtifacts),
+        loadArtifactBodies(nextArtifacts, artifactCache.current),
       ]);
       setBodies({ findings: nextFindings, findingsCoverage: coverage, ...loaded });
       if (TERMINAL.has(nextDetail.status)) {
@@ -132,11 +166,12 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
       }
       setError(null);
       backoff.current = 1000;
-      return nextDetail.status;
+      setUpdatedAt(Date.now());
+      return { status: nextDetail.status, ok: true };
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       backoff.current = Math.min(backoff.current * 2, 8000);
-      return "running";
+      return { status: "running", ok: false };
     }
   }, [rootTaskId]);
 
@@ -144,32 +179,126 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     if (!rootTaskId) return;
     cursor.current = 0;
     seen.current = new Set();
+    artifactCache.current = new Map();
+    backoff.current = 1000;
+    lastOk.current = 0;
+    activeRef.current = false;
+    streamWanted.current = true;
     setEvents([]);
     setReport(null);
+    setUpdatedAt(null);
+    setStreamStatus("idle");
     setLoading(true);
     let disposed = false;
 
+    const closeStream = () => {
+      const source = streamRef.current;
+      streamRef.current = null;
+      source?.close();
+    };
+
+    const dropStream = () => {
+      streamWanted.current = false;
+      closeStream();
+      setStreamStatus("polling");
+      if (disposed || timer.current !== null) return;
+      timer.current = window.setTimeout(() => {
+        void tickRef.current?.();
+      }, 0);
+    };
+
+    const holdStream = (): boolean => {
+      if (!streamWanted.current || typeof EventSource === "undefined" || !rootTaskId) return false;
+      const current = streamRef.current;
+      if (current && current.readyState !== EventSource.CLOSED) return true;
+      let source: EventSource;
+      try {
+        source = new EventSource(taskStreamUrl(rootTaskId, cursor.current));
+      } catch {
+        streamWanted.current = false;
+        return false;
+      }
+      streamRef.current = source;
+      source.onmessage = (message) => {
+        const event = parseStreamEvent(message.data);
+        if (!event) {
+          dropStream();
+          return;
+        }
+        if (!seen.current.has(event.event_id)) {
+          seen.current.add(event.event_id);
+          setEvents((currentEvents) =>
+            [...currentEvents, event].sort((a, b) => a.sequence - b.sequence),
+          );
+        }
+        cursor.current = Math.max(cursor.current, event.sequence);
+        void tickRef.current?.();
+      };
+      source.onerror = () => {
+        if (streamRef.current !== source) return;
+        dropStream();
+      };
+      return true;
+    };
+
     const tick = async () => {
-      if (disposed) return;
-      const status = await load();
-      if (disposed) return;
-      setLoading(false);
-      const active = status === "running" || status === "queued";
-      if (active) {
-        // poll only while the task can still change; a finished task stops here
-        timer.current = window.setTimeout(tick, 1500);
+      if (disposed || inFlight.current) return;
+      inFlight.current = true;
+      stop();
+      let active = false;
+      let delay = POLL_MS;
+      let outcomeOk = false;
+      try {
+        const outcome = await load();
+        if (disposed) return;
+        setLoading(false);
+        active = outcome.status === "running" || outcome.status === "queued";
+        delay = outcome.ok ? POLL_MS : backoff.current;
+        outcomeOk = outcome.ok;
+        if (outcome.ok) lastOk.current = Date.now();
+        activeRef.current = active;
+      } catch {
+        active = true;
+        delay = backoff.current;
+        activeRef.current = true;
+      } finally {
+        inFlight.current = false;
+        if (disposed) return;
+        const streaming = active && outcomeOk && holdStream();
+        if (streaming) {
+          setStreamStatus("streaming");
+        } else if (active) {
+          if (!streamWanted.current) closeStream();
+          setStreamStatus("polling");
+          if (timer.current === null) {
+            timer.current = window.setTimeout(() => {
+              void tick();
+            }, delay);
+          }
+        } else {
+          closeStream();
+          setStreamStatus("idle");
+        }
       }
     };
     tickRef.current = tick;
     void tick();
+    const watchdog = window.setInterval(() => {
+      if (disposed || !activeRef.current || inFlight.current || timer.current !== null) return;
+      if (Date.now() - lastOk.current > POLL_MS * 3) void tick();
+    }, POLL_MS);
     return () => {
       tickRef.current = null;
       disposed = true;
+      streamWanted.current = false;
+      closeStream();
+      window.clearInterval(watchdog);
       stop();
     };
   }, [rootTaskId, load, stop]);
 
   const refresh = useCallback(() => {
+    streamWanted.current = true;
     stop();
     void tickRef.current?.();
   }, [stop]);
@@ -183,6 +312,8 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     ...bodies,
     error,
     loading,
+    updatedAt,
+    streamStatus,
     refresh,
   };
 }

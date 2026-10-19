@@ -20,6 +20,7 @@ import hashlib
 import json
 import threading
 import uuid
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +48,7 @@ class RunChecksArgs(BaseModel):
     generated_tests: dict[str, list[str]] = Field(default_factory=dict)
     include_existing_tests: bool = True
     baseline_version: str | None = None
+    previous_version: str | None = None
     repair_check_ids: list[str] | None = None
 
 
@@ -267,6 +269,83 @@ def _expand_generated(content: str, check_id: str) -> list[tuple[str, str]]:
     return [(f"-{index}", test.content) for index, test in enumerate(selected)]
 
 
+def _regression_path(ctx: ToolContext, check_id: str) -> Path:
+    safe = "".join(ch for ch in check_id if ch.isalnum() or ch in "-_") or "check"
+    return ctx.workspace.settings.data_dir / "regression" / ctx.root_task_id / f"{safe}.json"
+
+
+def _content_key(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _load_regression(ctx: ToolContext, check_id: str) -> dict[str, str]:
+    path = _regression_path(ctx, check_id)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    loaded: dict[str, str] = {}
+    for item in payload.get("tests", []):
+        relpath = str(item.get("relpath") or "")
+        content = item.get("content")
+        if relpath and isinstance(content, str):
+            loaded[relpath] = content
+    return loaded
+
+
+def _save_regression(ctx: ToolContext, check_id: str, tests: dict[str, str]) -> None:
+    path = _regression_path(ctx, check_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "check_id": check_id,
+        "tests": [
+            {"relpath": relpath, "content": content, "sha256": _content_key(content)}
+            for relpath, content in sorted(tests.items())
+        ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _merge_tests(generated: dict[str, str], frozen: dict[str, str]) -> dict[str, str]:
+    """Union by content hash. Frozen tests are never dropped."""
+    merged = dict(generated)
+    seen = {_content_key(content) for content in merged.values()}
+    for relpath, content in frozen.items():
+        key = _content_key(content)
+        if key in seen:
+            continue
+        merged[relpath] = content
+        seen.add(key)
+    return merged
+
+
+async def _freeze_reproductions(
+    ctx: ToolContext,
+    check: CheckSpec,
+    generated: dict[str, str],
+    frozen: dict[str, str],
+    baseline_version: str,
+) -> dict[str, str]:
+    """Keep tests that fail on the original upload. Later rounds may only add."""
+    known = {_content_key(content) for content in frozen.values()}
+    updated = dict(frozen)
+    changed = False
+    for relpath, content in generated.items():
+        key = _content_key(content)
+        if key in known:
+            continue
+        outcome = await _run_baseline(ctx, check, {relpath: content}, baseline_version)
+        if outcome is not None and _classify(outcome)[0] is CheckStatus.FAILED:
+            updated[f"{GENERATED_TESTS_DIR}/{check.check_id}/frozen-{key[:16]}.py"] = content
+            known.add(key)
+            changed = True
+    if changed:
+        _save_regression(ctx, check.check_id, updated)
+    return updated
+
+
 async def _run_behavior(
     ctx: ToolContext, args: RunChecksArgs, check: CheckSpec, all_files: list[str]
 ) -> tuple[CheckResult, list[str], PytestOutcome | None]:
@@ -276,6 +355,12 @@ async def _run_behavior(
         content = ctx.artifacts.read_bytes(artifact_id).decode("utf-8")
         for suffix, source in _expand_generated(content, check.check_id):
             generated[f"{GENERATED_TESTS_DIR}/{check.check_id}/{artifact_id}{suffix}.py"] = source
+    frozen = _load_regression(ctx, check.check_id)
+    if args.baseline_version and generated:
+        frozen = await _freeze_reproductions(
+            ctx, check, generated, frozen, args.baseline_version
+        )
+    generated = _merge_tests(generated, frozen)
 
     existing: dict[str, str] = {}
     if args.include_existing_tests:
@@ -330,6 +415,10 @@ async def _run_behavior(
             "source_version": ctx.source_version,
             "test_suite_hash": suite_hash,
             "generated_suite_hash": generated_hash,
+            "baseline_version": args.baseline_version,
+            "previous_version": args.previous_version,
+            "regression_count": len(frozen),
+            "reproduction_frozen": len(frozen) > 0,
             "exit_code": outcome.exit_code,
             "timed_out": outcome.timed_out,
             "counts": outcome.counts,
@@ -343,14 +432,25 @@ async def _run_behavior(
         name=f"behavior-{check.check_id}",
     )
 
-    # baseline proof of the defect (A27): same generated tests on the pre-fix version
+    # Defect proof uses the original upload, not the previous patch. A rollback
+    # that redefines the bug as the expected behavior then fails this gate.
     baseline_note = ""
     base_outcome = None
     if args.baseline_version and generated:
         base_outcome = await _run_baseline(ctx, check, generated, args.baseline_version)
         if base_outcome is not None:
             baseline_note = (
-                f"；基础版本 {args.baseline_version} 上同一测试：{base_outcome.summary_line}"
+                f"；基础版本（原始上传 {args.baseline_version}）上同一测试：{base_outcome.summary_line}"
+            )
+    if (
+        args.previous_version
+        and args.previous_version != args.baseline_version
+        and generated
+    ):
+        previous_outcome = await _run_baseline(ctx, check, generated, args.previous_version)
+        if previous_outcome is not None:
+            baseline_note += (
+                f"；上一版本 {args.previous_version} 上同一测试：{previous_outcome.summary_line}"
             )
 
     status, reason = _classify(outcome)

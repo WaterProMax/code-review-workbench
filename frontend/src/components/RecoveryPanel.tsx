@@ -83,7 +83,12 @@ export function RecoveryPanel({
       <BudgetTable items={budgets} />
       {!resumable && (
         <p className="muted">
-          当前状态为 <span className="mono">{status}</span>，只有等待恢复或已中断的任务可以恢复或终止。
+          恢复或终止需要任务处于 <span className="mono">waiting_recovery</span> 或{" "}
+          <span className="mono">interrupted</span>
+          。当前状态为 <span className="mono">{status}</span>
+          {status === "running" || status === "queued"
+            ? "。请先取消运行，进入等待恢复后再恢复或终止。"
+            : "，此状态下不能恢复或终止。"}
         </p>
       )}
       {resumable && (

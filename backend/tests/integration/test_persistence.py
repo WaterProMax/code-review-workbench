@@ -243,6 +243,11 @@ def test_lease_acquire_fencing_and_release(repos: Repos) -> None:
     assert ok is True
     assert control.lease_owner == "worker-a"
     first_token = control.fencing_token
+    assert locks.heartbeat(root.task_id, "worker-a") is True
+    renewed = repos.controls.get(root.task_id)
+    assert renewed.lease_owner == "worker-a"
+    assert renewed.fencing_token == first_token
+    assert renewed.lease_expires_at is not None
 
     # a competing worker cannot take a live lease
     ok_other, _ = locks.acquire(root.task_id, "worker-b", ttl_seconds=30)
@@ -266,6 +271,9 @@ def test_lease_acquire_fencing_and_release(repos: Repos) -> None:
 
     assert locks.release(root.task_id, "worker-b") is True
     assert locks.heartbeat(root.task_id, "worker-b") is False
+    released = repos.controls.get(root.task_id)
+    assert released.lease_owner is None
+    assert released.lease_expires_at is None
 
 
 def test_idempotency_record_rejects_reuse_with_different_content(repos: Repos) -> None:

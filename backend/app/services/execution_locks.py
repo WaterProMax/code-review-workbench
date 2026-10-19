@@ -109,15 +109,8 @@ class ExecutionLockService:
         )
 
     def heartbeat(self, root_task_id: str, owner: str, ttl_seconds: float = 60.0) -> bool:
-        control = self.controls.get(root_task_id)
-        if control is None or control.lease_owner != owner:
-            return False
-        self.controls.update(
-            root_task_id,
-            heartbeat=True,
-            lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
-        )
-        return True
+        expires = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        return self.controls.extend_lease_if_owner(root_task_id, owner, expires)
 
     def release(self, root_task_id: str, owner: str) -> bool:
         control = self.controls.get(root_task_id)

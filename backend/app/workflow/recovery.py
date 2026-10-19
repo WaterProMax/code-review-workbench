@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.schemas.api import ResumeRequest, TerminateRequest
+from app.schemas.api import CancelRequest, ResumeRequest, TerminateRequest
 from app.schemas.artifacts import PatchApplication
 from app.schemas.enums import (
     ACTIVE_ROOT_STATUSES,
@@ -109,6 +109,15 @@ class TerminateOutcome:
     revision: int
     reason: str
     skipped_tasks: list[str] = field(default_factory=list)
+    reused: bool = False
+
+
+@dataclass
+class CancelOutcome:
+    root_task_id: str
+    status: str
+    revision: int
+    reason: str
     reused: bool = False
 
 
@@ -580,6 +589,170 @@ class RecoveryCoordinator:
             skipped_tasks=[s["task_id"] for s in skipped],
         )
 
+    # ---- cancel ------------------------------------------------------------
+    def cancel(
+        self,
+        root_task_id: str,
+        request: CancelRequest,
+        *,
+        owner: str,
+        operation_key: str,
+        fingerprint: str | None = None,
+    ) -> CancelOutcome:
+        """Stop a queued or running root and leave it waiting for resume or terminate.
+
+        Revision, lease owner and fencing match resume/terminate: a stale revision
+        conflicts, and a live lease held by someone else is refused. The current
+        owner's token is bumped so that executor can no longer publish. In-process
+        signalling is the caller's job, after this record commits.
+        """
+        fingerprint = fingerprint or _cancel_fingerprint(request)
+        with self.repos.db.transaction() as conn:
+            root = self.repos.tasks.get(root_task_id, conn=conn)
+            if root is None:
+                raise RecoveryRejected("UNKNOWN_TASK", f"未知总任务 {root_task_id}")
+
+            record = self.repos.idempotency.get(operation_key, conn=conn)
+            if record is not None:
+                if (record["request_fingerprint"] != fingerprint
+                        or record["root_task_id"] != root_task_id
+                        or record["operation_kind"] != "cancel_task"):
+                    raise ConflictError(f"幂等键 {operation_key} 已用于不同的取消请求")
+                return CancelOutcome(
+                    root_task_id=root_task_id,
+                    status=root.status,
+                    revision=root.revision,
+                    reason=request.reason,
+                    reused=True,
+                )
+
+            if root.status not in {s.value for s in ACTIVE_ROOT_STATUSES}:
+                raise RecoveryRejected(
+                    "NOT_RESUMABLE",
+                    f"仅 queued/running 可取消，当前 {root.status}",
+                )
+            if root.revision != request.expected_revision:
+                raise RecoveryRejected(
+                    "VERSION_CONFLICT",
+                    f"任务已更新：期望 revision {request.expected_revision}，当前 {root.revision}",
+                )
+
+            control = self.repos.controls.get(root_task_id, conn=conn)
+            if control is None:
+                control = self.repos.controls.ensure(
+                    root_task_id, f"seg-{root_task_id}", self.settings.max_graph_steps
+                )
+            now = datetime.now(timezone.utc)
+            if control.lease_valid(now) and control.lease_owner != owner:
+                raise RecoveryRejected(
+                    "LEASE_HELD",
+                    f"任务已有有效执行租约（owner={control.lease_owner}），不能取消",
+                )
+
+            closed = self._invalidate_cancelled_attempts(root_task_id, control, conn=conn)
+            self.repos.controls.update(
+                root_task_id,
+                release_lease=True,
+                fencing_token=control.fencing_token + 1,
+                required_action="用户已取消运行。确认后可恢复原任务，或终止并保留已有结论。",
+                conn=conn,
+            )
+            revision = self.repos.tasks.update(
+                root_task_id,
+                status=RootStatus.WAITING_RECOVERY.value,
+                bump_revision=True,
+                conn=conn,
+            )
+            self.repos.idempotency.put(
+                operation_key=operation_key,
+                operation_kind="cancel_task",
+                request_fingerprint=fingerprint,
+                response_ref=RootStatus.WAITING_RECOVERY.value,
+                root_task_id=root_task_id,
+                conn=conn,
+            )
+            self.sink(root_task_id, "task_service").emit(
+                EventType.WAITING_RECOVERY,
+                payload={
+                    "reason": request.reason,
+                    "cancelled": True,
+                    "recoverable": True,
+                    "closed_attempts": closed,
+                    "required_action": "用户已取消运行。确认后可恢复原任务，或终止并保留已有结论。",
+                },
+            )
+        return CancelOutcome(
+            root_task_id=root_task_id,
+            status=RootStatus.WAITING_RECOVERY.value,
+            revision=revision,
+            reason=request.reason,
+        )
+
+    def _invalidate_cancelled_attempts(self, root_task_id: str, control: Any, *, conn: Any) -> list[str]:
+        """Persist a controller terminal for every attempt that was still open."""
+        token = control.fencing_token if control is not None else 0
+        closed: list[str] = []
+        now = datetime.now(timezone.utc)
+        for attempt in self.repos.attempts.list_active(root_task_id, conn=conn):
+            error_ref = self.artifacts.save_json(
+                root_task_id=root_task_id,
+                artifact_type=ArtifactType.EVIDENCE,
+                data={
+                    "code": "CANCELLED",
+                    "category": "cancelled",
+                    "message": "用户取消了运行中的任务",
+                    "attempt_id": attempt.attempt_id,
+                },
+                source_version=attempt.source_version,
+                name=f"cancelled-{attempt.attempt_id}",
+            ).artifact_id
+            _terminal, created = self.repos.terminals.record(
+                TerminalRecord(
+                    attempt_id=attempt.attempt_id,
+                    dispatch_batch_id=attempt.dispatch_batch_id,
+                    origin=TerminalOrigin.CONTROLLER,
+                    outcome=TerminalOutcome.FAILED,
+                    error_ref=error_ref,
+                    fencing_token=token,
+                    operation_key=f"terminal:{attempt.attempt_id}",
+                ),
+                conn=conn,
+            )
+            if not created:
+                continue
+            self.repos.attempts.update_status(
+                attempt.attempt_id,
+                AttemptStatus.INVALIDATED,
+                error="CANCELLED: 用户取消了运行中的任务",
+                finished_at=now,
+                conn=conn,
+            )
+            if attempt.dispatch_batch_id:
+                self.repos.batches.add_received(
+                    attempt.dispatch_batch_id,
+                    attempt.attempt_id,
+                    TerminalOrigin.CONTROLLER,
+                    conn=conn,
+                )
+            if attempt.task_id != root_task_id:
+                self.repos.tasks.update(
+                    attempt.task_id, status=TaskStatus.FAILED.value, conn=conn
+                )
+            self.sink(root_task_id, "controller").emit(
+                EventType.TERMINAL_RECORDED,
+                task_id=attempt.task_id,
+                attempt_id=attempt.attempt_id,
+                dispatch_batch_id=attempt.dispatch_batch_id,
+                payload={
+                    "origin": "controller",
+                    "outcome": "failed",
+                    "code": "CANCELLED",
+                    "message": "用户取消了运行中的任务",
+                },
+            )
+            closed.append(attempt.attempt_id)
+        return closed
+
     # ---- helpers -----------------------------------------------------------
     def _planned_grants(self, request: ResumeRequest) -> list[tuple[str, int]]:
         grants: list[tuple[str, int]] = []
@@ -666,6 +839,12 @@ def _resume_fingerprint(request: ResumeRequest) -> str:
 
 
 def _terminate_fingerprint(request: TerminateRequest) -> str:
+    from app.services.execution_locks import request_fingerprint
+
+    return request_fingerprint(request.model_dump(mode="json"))
+
+
+def _cancel_fingerprint(request: CancelRequest) -> str:
     from app.services.execution_locks import request_fingerprint
 
     return request_fingerprint(request.model_dump(mode="json"))

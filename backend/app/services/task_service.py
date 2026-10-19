@@ -202,6 +202,10 @@ class TaskService:
             return [fault]
         if retry_reason == RetryReason.INSUFFICIENT_EVIDENCE.value:
             return [BudgetKind.EVIDENCE_RETRY.value]
+        # A new source version is a fresh verification of that version. It must
+        # not consume the "insufficient evidence" budget.
+        if retry_reason == RetryReason.NEW_VERSION_REVERIFY.value:
+            return []
         return []
 
     def _resolve_task(self, root: Task, item: DispatchItem, conn=None) -> Task:  # type: ignore[no-untyped-def]

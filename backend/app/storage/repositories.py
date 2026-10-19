@@ -1117,6 +1117,27 @@ class ControlRepository(BaseRepo):
         with self._tx(conn) as c:
             c.execute(f"UPDATE task_controls SET {', '.join(sets)} WHERE root_task_id = ?", params)
 
+    def extend_lease_if_owner(
+        self, root_task_id: str, owner: str, expires_at: datetime
+    ) -> bool:
+        """Renew a live lease only while this owner still holds it.
+
+        Cancel releases the lease in another transaction. A heartbeat that
+        already observed the old owner must not write a fresh expiry afterwards,
+        or the next resume would see a lease with no owner and a future expiry.
+        """
+        now = iso(datetime.now(timezone.utc))
+        with self._tx(None) as c:
+            cursor = c.execute(
+                """
+                UPDATE task_controls
+                SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+                WHERE root_task_id = ? AND lease_owner = ?
+                """,
+                (now, iso(expires_at), now, root_task_id, owner),
+            )
+            return cursor.rowcount == 1
+
     def increment_graph_steps(
         self, root_task_id: str, amount: int = 1, conn: sqlite3.Connection | None = None
     ) -> None:
@@ -1488,6 +1509,29 @@ class FindingRepository(BaseRepo):
                 WHERE finding_id = ? AND source_version = ?
                 """,
                 (FindingStatus.RESOLVED.value, dumps(evidence_refs), iso(datetime.now(timezone.utc)), finding_id, source_version),
+            )
+            return cur.rowcount == 1
+
+    def reopen(
+        self,
+        finding_id: str,
+        source_version: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        with self._tx(conn) as c:
+            cur = c.execute(
+                """
+                UPDATE findings SET status = ?, resolution_evidence_refs = ?, updated_at = ?
+                WHERE finding_id = ? AND source_version = ? AND status = ?
+                """,
+                (
+                    FindingStatus.OPEN.value,
+                    dumps([]),
+                    iso(datetime.now(timezone.utc)),
+                    finding_id,
+                    source_version,
+                    FindingStatus.RESOLVED.value,
+                ),
             )
             return cur.rowcount == 1
 

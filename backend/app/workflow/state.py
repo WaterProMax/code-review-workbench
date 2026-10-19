@@ -73,6 +73,13 @@ class WorkflowState(TypedDict, total=False):
     parent_corrections: int
     graph_steps: int
     run_segment_id: str
+    # Plan-correction loop (graph nodes plan / validate_plan / replan). The
+    # counter is the number of replan calls already made for this initialization.
+    draft_plan: dict[str, Any] | None
+    plan_problems: list[str]
+    plan_corrections: int
+    # Accepted finish verdict, written by check_finish and consumed by finalize.
+    finish_sketch: dict[str, Any] | None
 
     # --- detection / decisions --------------------------------------------
     detection: dict[str, Any] | None
@@ -156,6 +163,10 @@ def initial_state(
         parent_corrections=0,
         graph_steps=0,
         run_segment_id=run_segment_id,
+        draft_plan=None,
+        plan_problems=[],
+        plan_corrections=0,
+        finish_sketch=None,
         detection=None,
         feedback=[],
         next_action=None,

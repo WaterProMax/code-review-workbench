@@ -69,7 +69,7 @@ class AgentContext:
             workspace=self.workspace,
             artifacts=self.artifacts,
             repos=self.repos,
-            sink=self.sink,
+            sink=agent_event_sink(self, task),
             source_version=task.source_version,
             contract_version=task.contract_version,
             task_id=task.task_id,
@@ -171,7 +171,9 @@ class BaseAgent(AgentProtocol):
         Returns the validated final payload and the transcript of tool calls, so
         the role can attach evidence references to its report.
         """
-        allowed = context.tools.names_for(task.agent_id)
+        from app.registry.tools import agent_spec_tool_names
+
+        allowed = agent_spec_tool_names(context.tools, self.spec)
         system = "\n\n".join(
             [
                 self.prompt,
@@ -244,6 +246,17 @@ class BaseAgent(AgentProtocol):
                 break
 
             assert step.tool is not None
+            if step.tool not in allowed:
+                messages.append(
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            f"工具 {step.tool} 不在本角色可用列表中。"
+                            "请在 final 中给出结果，不要再次调用该工具。"
+                        ),
+                    )
+                )
+                continue
             result = await context.tools.execute(step.tool, tool_ctx, **step.args)
             transcript.append(
                 {

@@ -70,10 +70,12 @@
 
 原型仅用于验证框架能力，不保留为第二套业务运行器；业务图在 `app/workflow/`。
 
-## 未完成项
+## 未完成项（历史记录）
+
+> **历史记录**：本节保留修复前的未完成项原文。其中“A15 未达标”和“真实模型联调未执行”与 [验收记录](Acceptance.md) 的当前结论不符。验收记录写明 A01–A37 已通过，A15 已取消 xfail，真实模型联调已通过。不要把下面的原文读成当前失败。
 
 - P11 已完成（确定性验收全绿；`uv run pytest -q` → 195 passed, 1 xfailed）；P12 见本文件其余章节。
-- **A15「并行中间进程退出」未达标**（`docs/Acceptance.md` §5.1）。真实子进程在补丁后并行批次
+- **（历史记录）A15「并行中间进程退出」未达标**（`docs/Acceptance.md` §5.1）。真实子进程在补丁后并行批次
   （recheck+verify）中途被 SIGKILL 后，已完成分支的回报在恢复时丢失：根因是子 Agent 回报只在批次
   整体返回后的 `n_collect_results` 才批量落库，崩溃中途时业务账本里没有“已接受回报”，恢复无法按
   设计 §11“从接收账本重放”。已以 `@pytest.mark.xfail(strict=True)` 保留复现
@@ -81,14 +83,16 @@
   **未完成的改动**：将子 Agent 回报落库前移到各分支回报到达时（`run_one`/adapter 内 `receive_result`），
   并为 `n_dispatch` 增加按父决策 id 派生的稳定操作键——重放时复用同一批次、只执行缺少合法终态的分支、
   复用已接受回报且不重复扣减额度。该改动触及核心派发/恢复路径，需同步补批次重放与额度重放回归用例。
-- **真实模型联调未执行**。运行时探针 `GET /api/health` 返回 `model_configured=false`，未配置
+- **（历史记录）真实模型联调未执行**。运行时探针 `GET /api/health` 返回 `model_configured=false`，未配置
   `HW2_MODEL_API_KEY`，故 §15.3 的真实 DeepSeek 联调（clean/repairable/multi_file 三组示例、并行模式
   真实运行、去敏事件/报告/版本引用）未产出。复现命令与所需配置见 `docs/Acceptance.md` §5.2。
-- P03–P11 的测试与浏览器联调都使用显式注入的 `ScriptedLLMClient`（需要观察并发时可设 `latency_seconds`），
+- **（历史记录）** P03–P11 的测试与浏览器联调都使用显式注入的 `ScriptedLLMClient`（需要观察并发时可设 `latency_seconds`），
   **不能视为真实联调通过**。没有密钥时 `POST /api/tasks`、`/resume` 返回 503 `MODEL_NOT_CONFIGURED`，
   不会静默改用脚本模型；已有任务仍可浏览。
 
-## A15 修复方向（供接手）
+## A15 修复方向（历史记录）
+
+> **历史记录**：以下是 A15 达标前拟定的改动，不是当前缺口。[验收记录](Acceptance.md) §5.1 写明该场景已修复并通过，无 xfail。
 
 1. 子 Agent 回报一到就打账（`run_one` 内 `self.task_service.receive_result(...)`），让“已完成分支”在批次
    结束前即持久化；`n_collect_results` 退化为幂等对账。
@@ -228,7 +232,7 @@
 - **阻塞原因不丢失**：非法动作的 details 会被带到最终 `waiting_reason` / `required_action`（额度耗尽时写明追加项），
   避免把“停止自动重试”显示成成功。
 - **等待时的结论由控制层重算**：`n_wait` 不采用模型给的 `known_passed`，而是重新跑完成检测；
-  仍有已证实必需失败则保留 `passed=false`，证据不足则 `null`（Desgin.md §2.1）。
+  仍有已证实必需失败则保留 `passed=false`，证据不足则 `null`（Design.md §2.1）。
 - **不重复的进展判定**：检测记录失败签名（失败 check + 未关闭必需 Finding 的规则/位置）与补丁指纹；
   同一版本重复相同失败、或修复提交相同补丁指纹时判为 `no_progress`，不再无限重试。
 - **辅助判定字段**（`_decision_context` 新增，供父模型与前端）：`unapplied_fix_attempt_id`（产出补丁但未应用的最近修复 attempt）、
@@ -236,9 +240,10 @@
 
 ## 关键实现选择（P04）
 
-- **图结构**（`app/workflow/builder.py`）：`initialize → parent_decide → validate_action →（dispatch → collect_results → detect → parent_decide
-  循环 | apply_patch → detect → parent_decide | wait → END | finalize →（END | parent_decide））`。
-  节点函数与状态类型都在模块级定义（P00 原型结论第 2 条）；条件边用映射字典显式命名目标。
+- **图结构**（`app/workflow/builder.py`）：`START → initialize →（plan → validate_plan → replan 回路 | 已有合同则直接 budget）→ budget → parent_decide → validate_action`。
+  `validate_action` 再分到 `dispatch → collect_results → detect → budget`、`apply_patch → detect → budget`、`check_finish → finalize → END` 或 `wait → END`。
+  被拒绝的动作和派发失败回到 `budget`，不再直接回到父决策。`parent_decide`、`validate_action`、`dispatch`、`check_finish` 用 `Command` 路由；`initialize`、`validate_plan`、`budget` 用条件边。
+  节点函数与状态类型都在模块级定义（P00 原型结论第 2 条）。
 - **父模型只提议**：`agents/parent.py` 的 `plan/replan` 产出检查合同，`decide` 产出 `ParentAction`（discriminated union）。
   控制层 `workflow/controller.py` 逐项校验（角色已注册且支持该 task_kind、任务存在且角色一致、依赖满足、额度足够、
   verify 必须已有一个结果版本等于当前版本的 committed 补丁应用、apply_patch 的 base_version 必须等于当前版本），
@@ -246,7 +251,7 @@
 - **输入引用不由模型编造**：`DispatchItem.input_refs` / `apply_patch.patch_ref` 允许写 `"auto"`，
   控制层按 task_kind 从当前状态填充 source / acceptance_contract / findings / previous_patch / verification / patch_application
   的真实产物 id；`task_id` 只能引用任务树里已有的子任务。
-- **建任务由控制层代父 Agent 执行**：`create_standard_children` 在 initialize 阶段登记 review/fix/verify 三个子任务
+- **建任务由控制层代父 Agent 执行**：`create_standard_children` 在 `commit_plan` 登记 review/fix/verify 三个子任务；检查点里已有合同时由 `initialize` 复用并补登记
   （带 `review_completed` / `patch_applied` 依赖），用 `operation_key` 幂等，重放不会重复建树；登记不等于执行。
 - **检测确定性**（`app/workflow/detection.py`）：类别只由持久化证据得出——批次/尝试是否收齐、报告 status、
   当前版本必需 CheckResult（passed/failed/not_run/inconclusive）、未关闭的必需 Finding、补丁应用失败、失败签名与补丁指纹是否重复。
@@ -254,9 +259,9 @@
 - **完成检测独立于模型**：`TaskService.detect_completion` 重新从数据库计算；`finish` 只是提议，
   控制层拒绝不满足条件的 finish，并把原因作为反馈回到父模型。
 - **必需 Finding 的关闭**：只有“当前版本存在 passed 验证报告且目标该 Finding，并且该 Finding 的 check_id 在当前版本有 passed 结果”
-  时，控制层才写入 resolution_evidence_refs 并置 resolved（Desgin.md §5.1）。
+  时，控制层才写入 resolution_evidence_refs 并置 resolved（Design.md §5.1）。
 - **事务可重入**：`Database.transaction` 在线程内可重入，嵌套仓储调用加入外层事务；派发登记（批次 + 尝试 + 额度扣减 + 建子任务）
-  是一个业务事务（Desgin.md §6.2.1）。此前另开内层写事务会与外层 `BEGIN IMMEDIATE` 互锁，实测 76s 后抛
+  是一个业务事务（Design.md §6.2.1）。此前另开内层写事务会与外层 `BEGIN IMMEDIATE` 互锁，实测 76s 后抛
   `database is locked` 并触发 contextmanager 的 `generator didn't stop after throw()`。
 - **首版合同规则**（确定性校验）：required 的 `model_review` 只能是 initial_review；仅 initial_review 的 required 检查
   必须另有同 goal_ref 的 both/post_patch required 检查覆盖；追加合同不得降级已有必需项。
@@ -274,7 +279,7 @@
   审查/验证角色没有任何修改快照的工具。
 - **角色输出落产物**：审查问题（Finding）、验证报告、检查结果、证据都经受控工具写入不可变产物，
   TaskResult 只引用 artifact id，专用数据不进入共享 State。
-- **静态规则判定确定性**：`CheckSpec.rule_ids`（新增字段，已同步 Desgin.md §5.1）声明要评估的规则集，
+- **静态规则判定确定性**：`CheckSpec.rule_ids`（新增字段，已同步 Design.md §5.1）声明要评估的规则集，
   规则实现见 `services/tools/static_rules.py`（B006 可变默认参数 / E722 裸 except / E711 与 None 比较）。
 - **固定测试执行器**：只使用后端定义的 pytest 参数，独立执行目录，硬超时后终止进程组，输出限量；
   明确区分断言失败、收集失败、零测试、全部跳过、依赖缺失、超时与崩溃，零收集/全跳过/未运行一律不算通过。
@@ -313,8 +318,8 @@
 - 恢复重入点固定在“父决策前”（`aupdate_state(..., as_node="detect")`）：中断若发生在 `collect_results` 中途，
   未归并的回报由 `detect` 从业务表读取参与判定，但不补写 collect 阶段的事件；未结束 attempt 由启动扫描写为
   controller 终态后按证据重派（保留历史）。§11.2 表中更细的逐分支重放（如“候选补丁尚未发布”）留待需要时补充。
-- 进程中断验收覆盖“补丁已提交、验证未开始”这一断点（A13/A14，通过）；**并行批次中途退出（A15）尚未达标**：
-  已完成分支的回报在恢复时丢失，因回报在批次结束后才批量落库（详见「未完成项」与 `docs/Acceptance.md` §5.1）。
+- **（历史记录）** 进程中断验收覆盖“补丁已提交、验证未开始”这一断点（A13/A14，通过）；**并行批次中途退出（A15）尚未达标**：
+  已完成分支的回报在恢复时丢失，因回报在批次结束后才批量落库（详见「未完成项」与 `docs/Acceptance.md` §5.1）。此条是修复前的限制；当前 A15 已通过，见 [验收记录](Acceptance.md) §5.1。
 
 ## 启动入口（P11/P12 追加）
 
@@ -328,12 +333,15 @@
 
 - **可运行入口**：前后端启动脚本、演示数据脚本、`docs/API.md`；清洁启动实测通过（`/api/health`、
   `/api/workflows/templates`、未知版本 404）。
-- **真实验证结果**：后端 `uv run pytest -q` → **195 passed, 1 xfailed**；前端 `tsc --noEmit`、`vitest run`
+- **（历史记录）真实验证结果**：后端 `uv run pytest -q` → **195 passed, 1 xfailed**；前端 `tsc --noEmit`、`vitest run`
   → **12 passed**、`vite build` 通过；A01–A14、A16–A37 场景通过，逐条证据见 `docs/Acceptance.md`。
-- **未完成项**：① 真实 DeepSeek 模型联调（未配置 `HW2_MODEL_API_KEY`，`model_configured=false`）；
+  这是 P12 初次交接时的计数；当前 A01–A37 均已通过，不以本条的 xfail 作为现状。
+- **（历史记录）未完成项**：① 真实 DeepSeek 模型联调（未配置 `HW2_MODEL_API_KEY`，`model_configured=false`）；
   ② A15「并行中间进程退出」未达标（已完成分支回报在批次中途崩溃后丢失，strict xfail 复现，修复方向见上）。
   两者均在 `docs/Acceptance.md` §5 与「未完成项」中如实标注，未以脚本模型结果冒充真实通过。
-- **已知限制**：见上「已知限制」；其中并行批次中途中断的逐分支重放（A15）尚未实现。
+  上述两项是当时的未完成声明；验收记录现已写明真实模型联调与 A15 通过。
+- **（历史记录）已知限制**：见上「已知限制」；其中并行批次中途中断的逐分支重放（A15）尚未实现。
+  此句仅保留当时的说法；A15 现已通过。
 
 ## 关键实现选择（P11）
 
@@ -342,5 +350,5 @@
   报告 `conclusion_scope` 与 `execution_summary.unfixable_reason`。额度耗尽仍走 `waiting_recovery`（`workflow/nodes.py`）。
 - **孤儿 attempt 关闭必须带证据**：`RecoveryCoordinator._close_orphan_attempts` 先保存中断证据产物再以之为
   controller 终态的 `error_ref`，修除了并行批次存在在飞 attempt 时恢复抛 `ValidationError` 的崩溃。
-- **验收缺口可复现**：A15 以 `@pytest.mark.xfail(strict=True)` 固定；一旦实现修复会变为 XPASS 并因 strict 报错，
-  提醒同步更新 `docs/Acceptance.md`。
+- **（历史记录）验收缺口可复现**：A15 以 `@pytest.mark.xfail(strict=True)` 固定；一旦实现修复会变为 XPASS 并因 strict 报错，
+  提醒同步更新 `docs/Acceptance.md`。这是修复前的做法；当前验收记录中 A15 已通过，无 xfail。

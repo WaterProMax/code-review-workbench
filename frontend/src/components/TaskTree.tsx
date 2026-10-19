@@ -64,9 +64,13 @@ export function TaskTree({ tasks, attemptsByTask }: Props) {
                 <tr>
                   <th>执行尝试</th>
                   <td>
-                    <button type="button" className="link" onClick={() => setExpanded(open ? null : task.task_id)}>
-                      {open ? "收起" : `展开全部（${attempts.length}）`}
-                    </button>
+                    {attempts.length === 0 ? (
+                      <span className="muted">还没有执行尝试</span>
+                    ) : (
+                      <button type="button" className="link" onClick={() => setExpanded(open ? null : task.task_id)}>
+                        {open ? "收起" : `展开全部（${attempts.length}）`}
+                      </button>
+                    )}
                   </td>
                 </tr>
               </tbody>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getArtifact } from "../api/client";
+import { ApiError, cancelTask, getArtifact } from "../api/client";
+import type { StreamMode } from "../hooks/useTaskData";
 import { ArtifactViewer } from "../components/ArtifactViewer";
 import { DiffViewer } from "../components/DiffViewer";
 import { EventTimeline } from "../components/EventTimeline";
@@ -13,11 +14,20 @@ import { TaskTree } from "../components/TaskTree";
 import { VerificationPanel } from "../components/VerificationPanel";
 import { useTaskData } from "../hooks/useTaskData";
 
+function streamChannelLabel(status: string, mode: StreamMode): string {
+  if (mode === "streaming") return "实时连接";
+  if (mode === "polling") return "轮询";
+  if (status === "running" || status === "queued") return "连接中";
+  return "已停止";
+}
+
 export function TaskDetailPage() {
   const { rootTaskId } = useParams<{ rootTaskId: string }>();
   const data = useTaskData(rootTaskId);
   const [inlineArtifact, setInlineArtifact] = useState<{ id: string; body: unknown } | null>(null);
   const [artifactError, setArtifactError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const attemptsByTask = useMemo(() => {
     const map = new Map<string, typeof data.attempts>();
@@ -33,6 +43,24 @@ export function TaskDetailPage() {
     const decisions = data.events.filter((event) => event.event_type === "parent_decided");
     return decisions.length > 0 ? decisions[decisions.length - 1] : null;
   }, [data.events]);
+
+  async function onCancel() {
+    if (!rootTaskId || !data.detail) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await cancelTask(rootTaskId, {
+        expected_revision: data.detail.revision,
+        reason: "用户取消运行中的任务",
+      });
+      data.refresh();
+    } catch (err) {
+      setCancelError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      data.refresh();
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   async function openArtifact(artifactId: string) {
     setArtifactError(null);
@@ -52,15 +80,28 @@ export function TaskDetailPage() {
       <div className="panel">
         <div className="panel-head">
           <Link to="/tasks">← 任务列表</Link>
-          <span className="muted mono">URL 固化总任务：/tasks/{rootTaskId}</span>
+          <span className="muted mono">这个任务的地址：/tasks/{rootTaskId}</span>
         </div>
         {data.error && <div className="error-box">查询失败：{data.error}</div>}
         {data.loading && !data.detail && <p className="muted">正在加载任务…</p>}
+        {data.detail && (
+          <div className="actions">
+            <span className="muted" data-testid="stream-status">
+              事件通道：{streamChannelLabel(data.detail.status, data.streamStatus)}
+            </span>
+            {(data.detail.status === "running" || data.detail.status === "queued") && (
+              <button type="button" onClick={() => void onCancel()} disabled={cancelling}>
+                {cancelling ? "取消中…" : "取消"}
+              </button>
+            )}
+          </div>
+        )}
+        {cancelError && <div className="error-box">{cancelError}</div>}
       </div>
 
       {data.detail && (
         <>
-          <TaskSummary detail={data.detail} />
+          <TaskSummary detail={data.detail} updatedAt={data.updatedAt} />
           <section className="panel">
             <h2>任务树与尝试历史</h2>
             <TaskTree tasks={data.detail.tasks} attemptsByTask={attemptsByTask} />

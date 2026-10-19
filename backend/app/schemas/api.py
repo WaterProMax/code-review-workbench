@@ -235,6 +235,23 @@ class TerminateResponse(BaseModel):
     skipped_tasks: list[str] = Field(default_factory=list)
 
 
+class CancelRequest(BaseModel):
+    """Stop a queued or running root without skipping the revision check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0)
+    reason: str = Field(default="用户取消运行中的任务", min_length=1)
+
+
+class CancelResponse(BaseModel):
+    root_task_id: str
+    status: str
+    revision: int
+    reason: str
+    signalled: bool = False
+
+
 class ArtifactView(BaseModel):
     artifact_id: str
     root_task_id: str

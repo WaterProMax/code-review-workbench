@@ -6,7 +6,7 @@
  * so the drawing cannot describe a graph the backend will not run.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -14,6 +14,7 @@ import {
   Position,
   ReactFlow,
   applyNodeChanges,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeChange,
@@ -92,18 +93,25 @@ export function WorkflowCanvas({
     [config.nodes, positions, problemNodes, selectedNodeId],
   );
 
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const edges: Edge[] = useMemo(
     () =>
-      config.edges.map((edge) => ({
-        id: `${edge.source}->${edge.target}`,
-        source: edge.source,
-        target: edge.target,
-        animated: false,
-        markerEnd: { type: MarkerType.ArrowClosed },
-        label: edge.source === "parent" ? "派发" : "回报",
-        className: "wf-edge",
-      })),
-    [config.edges],
+      config.edges.map((edge) => {
+        const id = `${edge.source}->${edge.target}`;
+        const outbound = edge.source === "parent";
+        return {
+          id,
+          source: edge.source,
+          target: edge.target,
+          type: "smoothstep",
+          pathOptions: { offset: outbound ? 16 : 36, borderRadius: 8 },
+          animated: false,
+          markerEnd: { type: MarkerType.ArrowClosed },
+          label: outbound ? "派发" : "回报",
+          className: selectedEdgeId === id ? "wf-edge selected" : "wf-edge",
+        };
+      }),
+    [config.edges, selectedEdgeId],
   );
 
   const dependencyEdges: Edge[] = useMemo(
@@ -143,17 +151,39 @@ export function WorkflowCanvas({
         nodes={nodes}
         edges={[...edges, ...dependencyEdges]}
         onNodesChange={handleChanges}
-        onNodeClick={(_, node) => onSelect(node.id)}
-        onPaneClick={() => onSelect(null)}
+        onNodeClick={(_, node) => {
+          setSelectedEdgeId(null);
+          onSelect(node.id);
+        }}
+        onEdgeClick={(_, edge) => {
+          setSelectedEdgeId(edge.id);
+          onSelect(null);
+        }}
+        onPaneClick={() => {
+          setSelectedEdgeId(null);
+          onSelect(null);
+        }}
         fitView
         proOptions={{ hideAttribution: true }}
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
       >
-        <Background />
+        <FitView signature={config.nodes.map((node) => node.id).join(",") + config.edges.map((edge) => edge.source + edge.target).join(",")} />
+        <Background color="rgba(148, 163, 184, 0.22)" />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>
   );
+}
+
+function FitView({ signature }: { signature: string }) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => {
+      void fitView({ padding: 0.2 });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [signature, fitView]);
+  return null;
 }

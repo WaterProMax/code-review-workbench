@@ -165,3 +165,26 @@ curl -s http://127.0.0.1:8000/api/workflows/templates \
 | 终态任务再次 resume/terminate | 409 `NOT_RESUMABLE` |
 | 未配置模型密钥 | 503 `MODEL_NOT_CONFIGURED`（不创建任务、不静默降级） |
 | 中断恢复 | 启动扫描并每 5 秒复查失效租约，标 `interrupted`；`POST /resume` 重新取得执行权后从检查点续跑 |
+
+## 8. 事件流与运行中取消
+
+`GET /api/tasks/{root_task_id}/stream?after_seq=`：Server-Sent Events，从 `execution_events` 中 `sequence > after_seq`（默认 0）的位置继续读。每条新事件一行 `data: ` + JSON（与事件表同一条记录）。没有新事件时发送注释心跳 `: heartbeat`。根任务已是 `completed` / `partial` / `failed` 且没有更新的事件时结束；客户端断开时结束。不替代 `GET /events` 轮询，也不桥接 LangGraph 的图流。
+
+响应头：`Content-Type: text/event-stream`，`Cache-Control: no-cache`，`X-Accel-Buffering: no`。
+
+```bash
+curl -N "http://127.0.0.1:8000/api/tasks/T-…/stream?after_seq=0"
+# data: {"event_id":"ev-…","sequence":1,"event_type":"task_created", …}
+#
+# : heartbeat
+```
+
+`POST /api/tasks/{root_task_id}/cancel`：仅 `queued` / `running`。请求体必须带 `expected_revision`（`reason` 可省略，默认「用户取消运行中的任务」），并带 `Idempotency-Key`。修订不一致返回 409 `VERSION_CONFLICT`。有效租约属于其他执行者时返回 409 `CONFLICT`（`LEASE_HELD`），不会改写 fencing token。本进程持有租约时会发出取消信号、把未结束的 attempt 记为控制层终态（`origin=controller`，`code=CANCELLED`）、释放租约并递增 fencing token，根状态改为 `waiting_recovery`。之后仍可 `resume` 或 `terminate`。非 queued/running 返回 409 `NOT_RESUMABLE`。
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/tasks/T-…/cancel \
+  -H 'Idempotency-Key: cancel-1' -H 'Content-Type: application/json' \
+  -d '{"expected_revision":3,"reason":"用户取消运行中的任务"}'
+# 200 {"root_task_id":"T-…","status":"waiting_recovery","revision":4,
+#      "reason":"用户取消运行中的任务","signalled":true}
+```

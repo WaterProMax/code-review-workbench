@@ -1,0 +1,65 @@
+# One-command demo stack. Secrets stay out of the image: Compose interpolates
+# HW2_MODEL_* from the shell or from a gitignored .env next to this file.
+# An empty HW2_MODEL_API_KEY still starts the workbench (model_configured=false).
+
+name: hw2-workbench
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: hw2-workbench-backend
+    init: true
+    environment:
+      SEED_DEMO: "1"
+      HW2_DATA_DIR: /data
+      HW2_CONFIG_DIR: /app/config
+      HW2_HOST: 0.0.0.0
+      HW2_PORT: "8000"
+      HW2_FRONTEND_ORIGIN: http://localhost:8080
+      HW2_LOG_LEVEL: ${HW2_LOG_LEVEL:-info}
+      HW2_MODEL_PROVIDER: ${HW2_MODEL_PROVIDER:-deepseek}
+      HW2_MODEL_BASE_URL: ${HW2_MODEL_BASE_URL:-https://api.deepseek.com}
+      HW2_MODEL_NAME: ${HW2_MODEL_NAME:-deepseek-chat}
+      HW2_MODEL_API_KEY: ${HW2_MODEL_API_KEY:-}
+      HW2_MODEL_TEMPERATURE: ${HW2_MODEL_TEMPERATURE:-0.0}
+    volumes:
+      - hw2-data:/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/backend/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 600s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: hw2-workbench-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  hw2-data:

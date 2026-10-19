@@ -21,15 +21,47 @@ export default function App() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <h1>代码审查与修复工作台</h1>
+        <div className="brand">
+          <div className="brand-mark" aria-hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 6l-5 6 5 6" />
+              <path d="M16 6l5 6-5 6" />
+              <path d="M13 4l-2 16" />
+            </svg>
+          </div>
+          <div>
+            <h1>代码审查与修复工作台</h1>
+            <p className="brand-sub">Multi-Agent Workbench</p>
+          </div>
+        </div>
         <nav>
           <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
             提交任务
           </NavLink>
           <NavLink to="/tasks" className={({ isActive }) => (isActive ? "active" : "")}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M8 6h13" />
+              <path d="M8 12h13" />
+              <path d="M8 18h13" />
+              <path d="M3 6h.01" />
+              <path d="M3 12h.01" />
+              <path d="M3 18h.01" />
+            </svg>
             历史任务
           </NavLink>
           <NavLink to="/workflows" className={({ isActive }) => (isActive ? "active" : "")}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="5" cy="6" r="2.5" />
+              <circle cx="19" cy="6" r="2.5" />
+              <circle cx="12" cy="18" r="2.5" />
+              <path d="M7 8l4 8" />
+              <path d="M17 8l-4 8" />
+              <path d="M7.5 6h9" />
+            </svg>
             编排配置
           </NavLink>
         </nav>
@@ -70,7 +102,15 @@ export default function App() {
           <Route path="/tasks" element={<TaskListPage />} />
           <Route path="/tasks/:rootTaskId" element={<TaskDetailPage />} />
           <Route path="/workflows" element={<OrchestrationPage />} />
-          <Route path="*" element={<p className="error-box">未知页面</p>} />
+          <Route
+            path="*"
+            element={
+              <section className="panel">
+                <p className="error-box">未知页面</p>
+                <Link to="/tasks">返回任务列表</Link>
+              </section>
+            }
+          />
         </Routes>
       </main>
     </div>

@@ -44,7 +44,7 @@ LangGraph 是执行框架。父 Agent 的职责、任务 ID、父子关系、任
 ```text
 Test2/
 ├── Architecture.md
-├── Desgin.md
+├── Design.md
 ├── backend/
 │   ├── app/
 │   │   ├── api/             文件、任务、配置、报告与恢复接口

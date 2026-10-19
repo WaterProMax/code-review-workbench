@@ -82,6 +82,7 @@ export function OrchestrationPage() {
     if (!template) return;
     setTemplateName(name);
     setConfig(withLayout(template.config));
+    setVersionDraft("");
     setSelectedNodeId(null);
     setNotice(null);
     setError(null);

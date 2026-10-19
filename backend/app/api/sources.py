@@ -46,7 +46,7 @@ async def upload_sources(request: Request, files: list[UploadFile] = File(...)) 
                 ErrorCode.VALIDATION_ERROR,
                 f"不支持的文件类型 {suffix or rel!r}；允许 {list(settings.allowed_upload_suffixes)}",
             )
-        blob = await upload.read()
+        blob = await upload.read(settings.max_upload_file_bytes + 1)
         if len(blob) > settings.max_upload_file_bytes:
             raise AppError(
                 ErrorCode.VALIDATION_ERROR,

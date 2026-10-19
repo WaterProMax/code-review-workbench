@@ -7,9 +7,12 @@ snapshot, and returns 202 while a background run drives the graph.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, Query, Request
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import AppServices, services
 from app.api.errors import AppError
@@ -18,6 +21,8 @@ from app.schemas.api import (
     AttemptView,
     BudgetItem,
     BudgetStatus,
+    CancelRequest,
+    CancelResponse,
     ErrorCode,
     EventsResponse,
     ReportResponse,
@@ -44,6 +49,12 @@ from app.storage.repositories import ConflictError
 router = APIRouter(tags=["tasks"])
 
 REQUIRED_KINDS = ("review", "fix", "verify")
+_STREAM_IDLE_SECONDS = 1.0
+_TERMINAL_STREAM_STATUSES = {
+    RootStatus.COMPLETED.value,
+    RootStatus.PARTIAL.value,
+    RootStatus.FAILED.value,
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -343,6 +354,65 @@ async def task_events(
     )
 
 
+def _stream_status(svc: AppServices, root_task_id: str) -> str | None:
+    """Live runner status wins, matching the detail projection."""
+    root = svc.repos.tasks.get(root_task_id)
+    if root is None:
+        return None
+    if svc.runner.is_running(root_task_id):
+        return RootStatus.RUNNING.value
+    return root.status
+
+
+async def iter_task_events(
+    request: Request,
+    svc: AppServices,
+    root_task_id: str,
+    after_seq: int,
+    *,
+    idle_seconds: float = _STREAM_IDLE_SECONDS,
+):
+    """Tail ``execution_events`` and emit SSE frames. Heartbeat when idle.
+
+    Stops when the root is terminal and the table has nothing newer, or when the
+    client disconnects. This does not subscribe to the graph's own stream.
+    """
+    cursor = after_seq
+    while True:
+        if await request.is_disconnected():
+            return
+        events = svc.repos.events.list_after(root_task_id, cursor, limit=200)
+        if events:
+            for event in events:
+                cursor = event.sequence
+                payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            continue
+        status = _stream_status(svc, root_task_id)
+        if status is None or status in _TERMINAL_STREAM_STATUSES:
+            return
+        yield ": heartbeat\n\n"
+        await asyncio.sleep(idle_seconds)
+
+
+@router.get("/tasks/{root_task_id}/stream")
+async def task_stream(
+    request: Request,
+    root_task_id: str,
+    after_seq: int = Query(default=0, ge=0),
+) -> StreamingResponse:
+    svc = services(request)
+    _root_or_404(svc, root_task_id)
+    return StreamingResponse(
+        iter_task_events(request, svc, root_task_id, after_seq),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/tasks/{root_task_id}/artifacts", response_model=list[ArtifactView])
 async def task_artifacts(
     request: Request,
@@ -460,6 +530,41 @@ async def terminate_task(
         revision=outcome.revision,
         reason=outcome.reason,
         skipped_tasks=outcome.skipped_tasks,
+    )
+
+
+@router.post("/tasks/{root_task_id}/cancel", response_model=CancelResponse)
+async def cancel_task(
+    request: Request,
+    root_task_id: str,
+    payload: CancelRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> CancelResponse:
+    svc = services(request)
+    key = _require_key(idempotency_key, "取消任务")
+    _root_or_404(svc, root_task_id)
+    try:
+        outcome = svc.governance.recovery.cancel(
+            root_task_id,
+            payload,
+            owner=svc.runner.owner,
+            operation_key=key,
+        )
+    except ConflictError as exc:
+        raise AppError(ErrorCode.IDEMPOTENCY_CONFLICT, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        _raise_recovery_error(exc)
+        raise
+    # A replay must not signal the run that a later resume may have started.
+    signalled = False
+    if not outcome.reused:
+        signalled = await svc.runner.request_cancel(root_task_id)
+    return CancelResponse(
+        root_task_id=root_task_id,
+        status=outcome.status,
+        revision=outcome.revision,
+        reason=outcome.reason,
+        signalled=signalled,
     )
 
 

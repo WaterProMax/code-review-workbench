@@ -15,6 +15,10 @@ export function GoalForm({ sourceId, onSubmitted }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (sourceId) setError(null);
+  }, [sourceId]);
+
+  useEffect(() => {
     listWorkflows()
       .then((items) => {
         setWorkflows(items);

@@ -4,7 +4,7 @@
 
 本次补充明确了检查合同、终止路径、超时终态、预算与恢复、基础验证和画布配置边界。执行前先完成 P01 的协议定稿；不要把这些规则留到前端联调或最终验收时再猜测。
 
-设计依据：[Architecture.md](Architecture.md) 规定父子 Agent 编排和运行规则；[Desgin.md](Desgin.md) 规定模块、字段、协议和使用约定。本计划将这些设计拆成实施步骤。现有两个文件应保留；不要将 Desgin.md 擅自重命名。实施中确需补充字段或接口时，说明用途并同步设计文档；涉及改变父子关系、通过规则或恢复语义时，先整理具体冲突交给用户决定。
+设计依据：[Architecture.md](Architecture.md) 规定父子 Agent 编排和运行规则；[Design.md](Design.md) 规定模块、字段、协议和使用约定。本计划将这些设计拆成实施步骤。现有两个文件应保留；不要将 Desgin.md 擅自重命名。复查后续已将 Desgin.md 重命名为 Design.md，旧文件名是拼写错误。实施中确需补充字段或接口时，说明用途并同步设计文档；涉及改变父子关系、通过规则或恢复语义时，先整理具体冲突交给用户决定。
 
 ## 1. 执行范围与不可改变的约定
 
@@ -56,7 +56,7 @@
 ```text
 Test2/
 ├── Architecture.md
-├── Desgin.md
+├── Design.md
 ├── ImplementationPlan.md
 ├── README.md
 ├── .gitignore

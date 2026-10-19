@@ -31,7 +31,6 @@ agents:
       - read_file
       - search_code
       - read_artifact
-      - submit_patch
     permissions: [read_workspace, produce_patch]
 
   verifier:

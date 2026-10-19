@@ -15,6 +15,8 @@ import type {
   TaskDetailResponse,
   TaskListItem,
   TemplateListing,
+  CancelRequest,
+  CancelResponse,
   TerminateRequest,
   TerminateResponse,
   WorkflowConfig,
@@ -44,12 +46,31 @@ export class ApiError extends Error {
 
 const BASE = "/api";
 
+/** Tests shrink this so a hung request does not wait the full ten seconds. */
+export const apiTimeoutMs = { current: 10_000 };
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), apiTimeoutMs.current);
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort();
+    else init.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { ...init, headers, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(0, { code: "TIMEOUT", message: "请求超时" });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
@@ -171,6 +192,19 @@ export function terminateTask(rootTaskId: string, body: TerminateRequest): Promi
     body: JSON.stringify(body),
     headers: { "Idempotency-Key": newIdempotencyKey() },
   });
+}
+
+export function cancelTask(rootTaskId: string, body: CancelRequest): Promise<CancelResponse> {
+  return request<CancelResponse>(`/tasks/${encodeURIComponent(rootTaskId)}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "Idempotency-Key": newIdempotencyKey() },
+  });
+}
+
+/** EventSource URL for the execution-event tail. Polling stays available when this fails. */
+export function taskStreamUrl(rootTaskId: string, afterSeq = 0): string {
+  return `${BASE}/tasks/${encodeURIComponent(rootTaskId)}/stream?after_seq=${afterSeq}`;
 }
 
 export const api = { request };

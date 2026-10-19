@@ -163,6 +163,7 @@ class RetryReason(StrEnum):
     EXECUTION_FAULT = "execution_fault"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     BUSINESS_REPAIR = "business_repair"
+    NEW_VERSION_REVERIFY = "new_version_reverify"
     POST_PATCH_FIRST_CHECK = "post_patch_first_check"
     INITIAL = "initial"
 

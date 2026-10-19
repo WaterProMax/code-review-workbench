@@ -26,7 +26,7 @@ from app.services.workspace import WorkspaceService
 from app.settings import Settings
 from app.storage.repositories import Repos
 from app.workflow.assembly import assemble_workflow, compile_graph
-from app.workflow.builder import build_graph
+from app.workflow.builder import GRAPH_RECURSION_LIMIT, build_graph
 from app.workflow.controller import ParentController
 from app.workflow.detection import Detector
 from app.workflow.nodes import WorkflowRuntime
@@ -391,7 +391,11 @@ async def run_workflow(
         agent_versions=dict(workflow.agents),
     )
     final = await graph.ainvoke(
-        state, config={"configurable": {"thread_id": f"hw2-task:{root_task_id}"}}
+        state,
+        config={
+            "recursion_limit": GRAPH_RECURSION_LIMIT,
+            "configurable": {"thread_id": f"hw2-task:{root_task_id}"},
+        },
     )
     return final, llm
 

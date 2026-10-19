@@ -1,83 +1,89 @@
 """Graph construction: wires the parent/child nodes into a real StateGraph (§8.2).
 
-The graph never lets a child node finish the task: every path back to the parent
-goes through ``collect_results``/``detect``, and only ``finalize`` (after the
-control layer re-derives the completion condition) may end a run.
+Child nodes never finish the root task. Paths back to the parent go through
+``budget`` (the business step-budget gate) and only ``finalize`` — after
+``check_finish`` has accepted the proposal — has an edge to END. ``wait`` also
+ends the run. The step budget is the ledger in ``task_controls``; it is not
+``recursion_limit``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import RetryPolicy
 
-from app.workflow.nodes import TERMINAL_ROOT_STATUSES, WorkflowRuntime
+from app.providers.base import LLMError
+from app.workflow.nodes import WorkflowRuntime
 from app.workflow.state import WorkflowState
 
-_ACTION_TARGET = {
-    "dispatch_task": "dispatch",
-    "dispatch_batch": "dispatch",
-    "apply_patch": "apply_patch",
-    "wait_for_recovery": "wait",
-    "finish": "finalize",
-}
+# Framework superstep cap. A full repair is many nodes per business step, and
+# the granted step ledger can grow on resume up to the configured cap, so this
+# stays above that ledger. It does not replace ``graph_steps``.
+GRAPH_RECURSION_LIMIT = 16384
 
 
-def route_after_initialize(state: dict) -> str:
-    return "wait" if state.get("fatal_error") else "parent_decide"
+def _retry_parent_model(exc: Exception) -> bool:
+    """Retry only a transient model failure of the parent decision call.
+
+    A rejected action is a normal return value and starts a new decision; it
+    must not be replayed as the same node attempt.
+    """
+    return isinstance(exc, LLMError) and bool(exc.recoverable)
 
 
-def route_after_validate(state: dict) -> str:
-    raw = state.get("next_action")
-    if not raw:
-        return "parent_decide"
-    return _ACTION_TARGET.get(raw.get("action", ""), "parent_decide")
-
-
-def route_after_dispatch(state: dict) -> str:
-    return "collect_results" if state.get("dispatch_ok") else "parent_decide"
-
-
-def route_after_finalize(state: dict) -> str:
-    return "end" if state.get("status") in TERMINAL_ROOT_STATUSES else "parent_decide"
+PARENT_DECIDE_RETRY = RetryPolicy(
+    initial_interval=0.0,
+    backoff_factor=1.0,
+    max_interval=0.0,
+    max_attempts=2,
+    jitter=False,
+    retry_on=_retry_parent_model,
+)
 
 
 def build_graph(runtime: WorkflowRuntime, *, checkpointer: Any = None):
     graph = StateGraph(WorkflowState)
     graph.add_node("initialize", runtime.n_initialize)
-    graph.add_node("parent_decide", runtime.n_parent_decide)
+    graph.add_node("plan", runtime.n_plan)
+    graph.add_node("validate_plan", runtime.n_validate_plan)
+    graph.add_node("replan", runtime.n_replan)
+    graph.add_node("commit_plan", runtime.n_commit_plan)
+    graph.add_node("budget", runtime.n_budget)
+    graph.add_node("parent_decide", runtime.n_parent_decide, retry_policy=PARENT_DECIDE_RETRY)
     graph.add_node("validate_action", runtime.n_validate_action)
     graph.add_node("dispatch", runtime.n_dispatch)
     graph.add_node("collect_results", runtime.n_collect_results)
     graph.add_node("detect", runtime.n_detect)
     graph.add_node("apply_patch", runtime.n_apply_patch)
+    graph.add_node("check_finish", runtime.n_check_finish)
     graph.add_node("wait", runtime.n_wait)
     graph.add_node("finalize", runtime.n_finalize)
 
-    graph.set_entry_point("initialize")
+    graph.add_edge(START, "initialize")
     graph.add_conditional_edges(
-        "initialize", route_after_initialize, {"parent_decide": "parent_decide", "wait": "wait"}
+        "initialize",
+        runtime.route_after_initialize,
+        {"plan": "plan", "budget": "budget", "wait": "wait"},
     )
-    graph.add_edge("parent_decide", "validate_action")
+    graph.add_edge("plan", "validate_plan")
     graph.add_conditional_edges(
-        "validate_action",
-        route_after_validate,
-        {
-            "dispatch": "dispatch",
-            "apply_patch": "apply_patch",
-            "finalize": "finalize",
-            "wait": "wait",
-            "parent_decide": "parent_decide",
-        },
+        "validate_plan",
+        runtime.route_after_validate_plan,
+        {"replan": "replan", "commit_plan": "commit_plan", "wait": "wait"},
     )
+    graph.add_edge("replan", "validate_plan")
+    graph.add_edge("commit_plan", "budget")
     graph.add_conditional_edges(
-        "dispatch", route_after_dispatch, {"collect_results": "collect_results", "parent_decide": "parent_decide"}
+        "budget",
+        runtime.route_after_budget,
+        {"wait": "wait", "parent_decide": "parent_decide"},
     )
+    # parent_decide, validate_action, dispatch and check_finish route with Command.
     graph.add_edge("collect_results", "detect")
-    graph.add_edge("detect", "parent_decide")
+    graph.add_edge("detect", "budget")
     graph.add_edge("apply_patch", "detect")
-    graph.add_conditional_edges(
-        "finalize", route_after_finalize, {"end": END, "parent_decide": "parent_decide"}
-    )
+    graph.add_edge("finalize", END)
     graph.add_edge("wait", END)
     return graph.compile(checkpointer=checkpointer)

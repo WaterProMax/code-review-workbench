@@ -10,6 +10,9 @@ export function DiffViewer({ patches, applications }: Props) {
   if (patches.length === 0 && applications.length === 0) {
     return <p className="muted">没有补丁：当前任务不需要修改代码，或修复尚未产出补丁。</p>;
   }
+  const appliedIds = new Set(
+    applications.filter((app) => app.status === "committed").map((app) => app.patch_id),
+  );
   return (
     <div>
       {applications.length > 0 && (
@@ -48,6 +51,11 @@ export function DiffViewer({ patches, applications }: Props) {
         <div key={patch.patch_id} className="patch-block">
           <div className="row">
             <strong className="mono">{patch.patch_id}</strong>
+            {appliedIds.has(patch.patch_id) ? (
+              <span className="badge ok">已应用</span>
+            ) : (
+              <span className="badge null">未使用</span>
+            )}
             <span className="muted mono">基础版本 {patch.base_version}</span>
             {patch.rationale && <span className="muted">{patch.rationale}</span>}
           </div>

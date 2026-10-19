@@ -12,8 +12,11 @@ import asyncio
 import uuid
 from typing import Any
 
+from langgraph.types import Command
+
 from app.storage.checkpoints import thread_id_for
-from app.workflow.nodes import WorkflowRuntime
+from app.workflow.builder import GRAPH_RECURSION_LIMIT
+from app.workflow.nodes import WorkflowRuntime, action_goto
 from app.workflow.recovery import RecoveryCoordinator, RunRight
 from app.workflow.state import WorkflowState, initial_state
 
@@ -34,7 +37,12 @@ class WorkflowRunner:
         self.heartbeat_interval = 20.0
 
     def config(self, root_task_id: str) -> dict[str, Any]:
-        return {"configurable": {"thread_id": thread_id_for(root_task_id)}}
+        # recursion_limit bounds framework supersteps. The business step budget
+        # stays on the budget node and is not this number.
+        return {
+            "recursion_limit": GRAPH_RECURSION_LIMIT,
+            "configurable": {"thread_id": thread_id_for(root_task_id)},
+        }
 
     # ---- start -------------------------------------------------------------
     async def start(
@@ -91,13 +99,22 @@ class WorkflowRunner:
         overrides["rejection_count"] = 0
 
         if values.get("contract"):
-            # Correct the checkpointed projection, then continue from the parent
-            # decision. Only scalar channels are written so accumulated list/map
-            # channels are preserved rather than duplicated.
+            # Correct the checkpointed projection, then continue. detect's edge
+            # enters the step-budget gate, which continues to the parent decision.
+            # Only scalar channels are written so accumulated list/map channels
+            # are preserved rather than duplicated.
             replay_dispatch = bool(values.get("next_action") and values["next_action"].get("action") in {"dispatch_task", "dispatch_batch"} and "dispatch" in snapshot.next)
             if replay_dispatch:
                 overrides["next_action"] = values["next_action"]
-            await self.graph.aupdate_state(config, overrides, as_node="validate_action" if replay_dispatch else "detect")
+                # Command routing is not replayed by a plain state write, so the
+                # resumed dispatch has to name its successor explicitly.
+                await self.graph.aupdate_state(
+                    config,
+                    Command(update=overrides, goto=action_goto(overrides["next_action"])),
+                    as_node="validate_action",
+                )
+            else:
+                await self.graph.aupdate_state(config, overrides, as_node="detect")
             return await self._drive(right, None, ttl_seconds)
 
         # No usable checkpoint state: replay the graph from its entry point with a

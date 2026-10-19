@@ -55,7 +55,7 @@ class VerifierAgent(BaseAgent):
             if finding.required_for_goal and finding.status is FindingStatus.OPEN:
                 by_id[finding.finding_id] = finding
         findings = list(by_id.values())
-        baseline_version = self._baseline_version(task, context)
+        baseline_version, previous_version = self._baseline_versions(task, context)
         provided = _provided_tests(task, context)
 
         final, _ = await self.run_tool_loop(
@@ -73,6 +73,7 @@ class VerifierAgent(BaseAgent):
                 "all_checks": [c.model_dump(mode="json") for c in checks],
                 "target_findings": [f.model_dump(mode="json") for f in findings],
                 "baseline_version": baseline_version,
+                "previous_version": previous_version,
                 "test_execution_layout": "pytest 的 cwd 和 PYTHONPATH 均为快照根目录。直接 import 被测模块；不要通过测试 __file__ 的兄弟路径加载源码。",
                 "provided_tests": provided.describe() if provided else None,
             },
@@ -119,6 +120,7 @@ class VerifierAgent(BaseAgent):
             generated_tests=generated_by_check,
             include_existing_tests=True,
             baseline_version=baseline_version,
+            previous_version=previous_version,
             repair_check_ids=repair_check_ids,
         )
         results: list[CheckResult] = []
@@ -195,15 +197,32 @@ class VerifierAgent(BaseAgent):
         )
 
     @staticmethod
-    def _baseline_version(task: TaskEnvelope, context: AgentContext) -> str | None:
+    def _baseline_versions(
+        task: TaskEnvelope, context: AgentContext
+    ) -> tuple[str | None, str | None]:
+        """Original upload for the defect gate, plus the previous patch version.
+
+        Comparing only with the previous patch treats a rollback as a fix: the
+        new tests fail on the already-corrected version and pass on the
+        reverted one. The gate therefore uses the first uploaded snapshot.
+        """
         ref = task.input_refs.patch_application
         if not ref:
-            return None
+            return None, None
         try:
             application = context.artifacts.read_json(ref)
         except Exception:  # noqa: BLE001 - baseline proof is optional
-            return None
-        return application.get("base_version")
+            return None, None
+        previous = application.get("base_version")
+        if not previous:
+            return None, None
+        try:
+            initial = context.workspace.initial_source_version(
+                task.root_task_id, task.source_version
+            )
+        except Exception:  # noqa: BLE001 - fall back to the previous snapshot
+            initial = previous
+        return initial or previous, previous
 
 
 @dataclass(frozen=True)

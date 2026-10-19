@@ -31,7 +31,7 @@ from app.schemas.artifacts import (
     compute_source_version,
     normalise_relpath,
 )
-from app.schemas.enums import ArtifactType, PatchApplicationStatus, PatchFormat
+from app.schemas.enums import ArtifactType, FindingStatus, PatchApplicationStatus, PatchFormat
 from app.services.artifacts import ArtifactService, sha256_bytes
 from app.settings import Settings
 from app.storage.repositories import Repos
@@ -380,6 +380,21 @@ class WorkspaceService:
             created_by_attempt_id=created_by_attempt_id,
         )
 
+    def initial_source_version(self, root_task_id: str, source_version: str) -> str:
+        """Walk ``parent_version`` back to the uploaded snapshot."""
+        seen: set[str] = set()
+        current = source_version
+        while current and current not in seen:
+            seen.add(current)
+            try:
+                manifest = self.resolve_manifest(root_task_id, current)
+            except KeyError:
+                return current
+            if not manifest.parent_version:
+                return current
+            current = manifest.parent_version
+        return source_version
+
     def resolve_manifest(self, root_task_id: str, source_version: str) -> SourceManifest:
         meta = self.snapshot_dir(root_task_id, source_version) / ".snapshot.json"
         if not meta.exists():
@@ -579,6 +594,30 @@ class WorkspaceService:
 
         return self.commit_application(intent, committed_at=_now())
 
+    def _reopen_findings_touched_by(self, root_task_id: str, patch_id: str) -> list[str]:
+        """A later patch that edits a closed problem's file must be verified again."""
+        patch: Patch | None = None
+        for artifact in self.repos.artifacts.list_by_root(root_task_id, ArtifactType.PATCH.value):
+            try:
+                data = self.artifacts.read_json(artifact.artifact_id)
+            except Exception:  # noqa: BLE001 - skip an unreadable patch artifact
+                continue
+            if data.get("patch_id") == patch_id:
+                patch = Patch.model_validate(data)
+                break
+        if patch is None:
+            return []
+        paths = _patch_paths(patch)
+        reopened: list[str] = []
+        for finding in self.repos.findings.list_current_by_root(root_task_id):
+            if not finding.required_for_goal or finding.status is not FindingStatus.RESOLVED:
+                continue
+            if finding.file_path not in paths:
+                continue
+            if self.repos.findings.reopen(finding.finding_id, finding.source_version):
+                reopened.append(finding.finding_id)
+        return reopened
+
     def commit_application(
         self, application: PatchApplication, *, committed_at: datetime | None = None
     ) -> PatchApplication:
@@ -596,6 +635,7 @@ class WorkspaceService:
             result_version=committed.result_version,
             committed_at=committed.committed_at,
         )
+        self._reopen_findings_touched_by(application.root_task_id, application.patch_id)
         self.artifacts.save_json(
             root_task_id=application.root_task_id,
             artifact_type=ArtifactType.PATCH_APPLICATION,

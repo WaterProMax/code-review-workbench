@@ -57,7 +57,9 @@ class FixerAgent(BaseAgent):
             tool_ctx,
             opening=(
                 "请针对当前版本生成候选补丁。先读取相关文件确认问题位置，"
-                "再用 submit_patch 提交补丁；提交成功后给出最终说明。"
+                "然后在 final 里给出补丁内容。不要调用 submit_patch，"
+                "执行器会用 final 里的 diff_text 或 edits 提交唯一的一份补丁。"
+                "不得通过修改 docstring、注释或规格说明来重新定义缺陷。"
             ),
             extra_context={
                 "findings": [f.model_dump(mode="json") for f in findings],
@@ -94,12 +96,31 @@ class FixerAgent(BaseAgent):
 
         patch_id = result.data["patch_id"]
         artifact_id = result.data["artifact_id"]
+        warning = _spec_rewrite_warning(final)
+        summary = f"已生成候选补丁 {patch_id}，等待应用与验证。{final.summary}"
+        if warning:
+            summary = f"{summary} 警告：{warning}"
         return self.build_result(
             task,
             status=ResultStatus.COMPLETED,
             passed=None,
-            summary=f"已生成候选补丁 {patch_id}，等待应用与验证。{final.summary}",
+            summary=summary,
             started_at=started_at,
             result_refs={"patch": artifact_id},
             evidence_refs=[artifact_id],
         )
+
+
+def _spec_rewrite_warning(final: FixerFinal) -> str | None:
+    """Warn when a patch rewrites a docstring that talks about the defect."""
+    chunks = [final.diff_text or ""]
+    for edit in final.edits:
+        chunks.append(edit.find)
+        chunks.append(edit.replace)
+    blob = "\n".join(chunks)
+    if '"""' not in blob and "'''" not in blob:
+        return None
+    markers = ("缺陷", "ZeroDivision", "抛出", "空列表", "空序列", "bug", "Bug")
+    if any(marker in blob for marker in markers):
+        return "补丁改写了文档字符串中与缺陷描述相关的内容；不得用改规格代替修代码"
+    return None

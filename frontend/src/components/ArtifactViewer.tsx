@@ -36,7 +36,7 @@ export function ArtifactViewer({ artifacts, onOpen }: Props) {
               <button type="button" className="link" onClick={() => onOpen(artifact.artifact_id)}>
                 查看
               </button>{" "}
-              <a href={artifact.download_url} target="_blank" rel="noreferrer">
+              <a href={artifact.download_url} download>
                 下载
               </a>
             </td>

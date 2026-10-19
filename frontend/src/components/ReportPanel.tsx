@@ -109,28 +109,28 @@ export function ReportPanel({ report, artifacts }: Props) {
       <ul className="downloads">
         {report.report_artifact_id && (
           <li>
-            <a href={`/api/artifacts/${report.report_artifact_id}`} target="_blank" rel="noreferrer">
+            <a href={`/api/artifacts/${report.report_artifact_id}`} download>
               报告 JSON
             </a>
           </li>
         )}
         {report.markdown && (
           <li>
-            <a href={`/api/artifacts/${report.report_artifact_id}`} target="_blank" rel="noreferrer">
+            <a href={`/api/artifacts/${report.report_artifact_id}`} download>
               Markdown 报告
             </a>
           </li>
         )}
         {patchArtifacts.map((artifact) => (
           <li key={artifact.artifact_id}>
-            <a href={artifact.download_url} target="_blank" rel="noreferrer">
+            <a href={artifact.download_url} download>
               补丁 {artifact.artifact_id}
             </a>
           </li>
         ))}
         {logs.map((artifact) => (
           <li key={artifact.artifact_id}>
-            <a href={artifact.download_url} target="_blank" rel="noreferrer">
+            <a href={artifact.download_url} download>
               {artifact.artifact_type} {artifact.artifact_id}
             </a>
           </li>

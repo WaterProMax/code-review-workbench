@@ -30,10 +30,12 @@ async def get_artifact(request: Request, artifact_id: str) -> Response:
     except ArtifactError as exc:
         raise AppError(ErrorCode.NOT_FOUND, f"未知或不可读产物 {artifact_id}：{exc}") from exc
 
+    filename = f"{artifact_id}.json" if artifact.storage_ref.endswith(_JSON_SUFFIX) else artifact_id
+    disposition = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if artifact.storage_ref.endswith(_JSON_SUFFIX):
-        return JSONResponse(content=json.loads(data.decode("utf-8")))
+        return JSONResponse(content=json.loads(data.decode("utf-8")), headers=disposition)
     return Response(
         content=data,
         media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'inline; filename="{artifact_id}"'},
+        headers=disposition,
     )

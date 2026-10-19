@@ -111,6 +111,7 @@ export const RETRY_REASON_LABELS: Record<string, string> = {
   business_repair: "业务修复重派",
   execution_fault: "执行故障重派",
   insufficient_evidence: "补充证据",
+  new_version_reverify: "新版本重验",
 };
 
 export const AGENT_ROLE_LABELS: Record<string, string> = {
@@ -147,7 +148,14 @@ export function formatTime(value: string | null | undefined): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
+  const text = date.toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" });
+  return `${text}（UTC+8）`;
+}
+
+export function formatAge(updatedAt: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - updatedAt) / 1000));
+  if (seconds < 5) return "刚刚";
+  return `${seconds} 秒前`;
 }
 
 export function formatDuration(ms: number | null | undefined): string {

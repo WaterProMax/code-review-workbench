@@ -30,7 +30,7 @@ export function FindingList({ findings }: { findings: Finding[] }) {
               {finding.line ? `:${finding.line}` : ""}
             </td>
             <td>{finding.severity}</td>
-            <td>{finding.required_for_goal ? "必需" : "补充"}</td>
+            <td>{finding.required_for_goal ? "必需" : "建议"}</td>
             <td>
               {finding.status === "resolved" ? (
                 <span className="badge ok">已解决</span>

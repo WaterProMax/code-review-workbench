@@ -33,12 +33,22 @@ from app.workflow.runner import WorkflowRunner
 logger = logging.getLogger("hw2.background")
 
 
+def _consume_task_result(task: asyncio.Task) -> None:
+    """Retrieve a finished task result so cancellation is not reported as abandoned."""
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        return
+
+
 @dataclass
 class RunHandle:
     root_task_id: str
     kind: str
     task: asyncio.Task | None = None
     done: asyncio.Event = field(default_factory=asyncio.Event)
+    # Shared with AgentContext.cancellation for the in-process run, when one exists.
+    cancellation: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class TaskRunnerService:
@@ -79,6 +89,31 @@ class TaskRunnerService:
     def is_running(self, root_task_id: str) -> bool:
         handle = self._handles.get(root_task_id)
         return handle is not None and handle.task is not None and not handle.task.done()
+
+    def cancellation_event(self, root_task_id: str) -> asyncio.Event | None:
+        handle = self._handles.get(root_task_id)
+        return None if handle is None else handle.cancellation
+
+    async def request_cancel(self, root_task_id: str, *, timeout: float = 5.0) -> bool:
+        """Signal the in-process run, if one exists, and wait for it to leave the loop.
+
+        The event is the same object later copied onto ``AgentContext.cancellation``.
+        Cancelling the task unblocks a model or tool await that has not reached its
+        next cooperative check. A missing handle means there is nothing to signal.
+        """
+        handle = self._handles.get(root_task_id)
+        if handle is None:
+            return False
+        handle.cancellation.set()
+        task = handle.task
+        if task is None or task.done():
+            if task is not None and task.done():
+                _consume_task_result(task)
+            return True
+        task.add_done_callback(_consume_task_result)
+        task.cancel()
+        await asyncio.wait({task}, timeout=timeout)
+        return True
 
     def running_ids(self) -> list[str]:
         return [
@@ -132,7 +167,12 @@ class TaskRunnerService:
         try:
             await coro
         except asyncio.CancelledError:
-            logger.info("background run cancelled: %s", handle.root_task_id)
+            if handle.cancellation.is_set():
+                logger.info("background run cancelled by user: %s", handle.root_task_id)
+                if self._handles.get(handle.root_task_id) is handle:
+                    self._settle_cancelled_run(handle.root_task_id)
+            else:
+                logger.info("background run cancelled: %s", handle.root_task_id)
             raise
         except (ExecutionFenced, RunRightDenied):
             logger.info("execution right lost, leaving current owner in control: %s", handle.root_task_id)
@@ -173,9 +213,58 @@ class TaskRunnerService:
                 pass
 
     # ---- drivers -----------------------------------------------------------
+    def _settle_cancelled_run(self, root_task_id: str) -> None:
+        """Drop a lease acquired after the cancel record, and don't stay running.
+
+        Only the handle that was current at cancellation may do this. A resume that
+        already replaced the handle keeps its own lease.
+        """
+        try:
+            control = self.repos.controls.get(root_task_id)
+            if control is not None and control.lease_owner == self.owner:
+                self.repos.controls.update(root_task_id, release_lease=True)
+            root = self.repos.tasks.get(root_task_id)
+            if root is not None and root.status in {RootStatus.QUEUED.value, RootStatus.RUNNING.value}:
+                self.repos.controls.update(
+                    root_task_id,
+                    required_action="用户已取消运行。确认后可恢复原任务，或终止并保留已有结论。",
+                )
+                self.repos.tasks.update(
+                    root_task_id,
+                    status=RootStatus.WAITING_RECOVERY.value,
+                    bump_revision=True,
+                )
+        except Exception:
+            logger.exception("failed to settle cancelled run %s", root_task_id)
+
+    def _bind_cancellation(self, runtime: Any, cancellation: asyncio.Event) -> None:
+        """Point new agent contexts at the handle's cancel event.
+
+        ``make_context`` lives on the workflow runtime and is not edited here; the
+        adapter calls ``context_factory`` for each attempt, so replacing that
+        factory is enough for ``AgentContext.cancellation`` to observe this event.
+        """
+        adapter = getattr(runtime, "adapter", None)
+        if adapter is None:
+            return
+        original = adapter.context_factory
+
+        def make_context(task: Any, spec: Any) -> Any:
+            context = original(task, spec)
+            context.cancellation = cancellation
+            return context
+
+        adapter.context_factory = make_context
+
     async def _run(self, *, root_task_id: str, workflow_version: str | None = None, **kwargs: Any) -> None:
+        handle = self._handles.get(root_task_id)
+        cancellation = handle.cancellation if handle is not None else None
+        if cancellation is not None and cancellation.is_set():
+            return
         workflow = self._workflow_for(root_task_id, workflow_version)
         async with open_checkpointer(self.settings.checkpoints_db_path) as checkpointer:
+            if cancellation is not None and cancellation.is_set():
+                return
             assembly = assemble_workflow(
                 settings=self.settings,
                 repos=self.repos,
@@ -183,6 +272,8 @@ class TaskRunnerService:
                 llm=self.llm_factory(),
                 extensions=self.extensions,
             )
+            if cancellation is not None:
+                self._bind_cancellation(assembly.runtime, cancellation)
             graph = compile_graph(assembly, checkpointer=checkpointer)
             runner = WorkflowRunner(
                 runtime=assembly.runtime,
@@ -190,6 +281,8 @@ class TaskRunnerService:
                 recovery=assembly.recovery,
                 owner=self.owner,
             )
+            if cancellation is not None and cancellation.is_set():
+                return
             if workflow_version is None:
                 await runner.resume(root_task_id=root_task_id)
             else:

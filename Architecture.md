@@ -2,7 +2,7 @@
 
 第 2 节“LangGraph 架构编排”为总览，其他流程图均按“父 Agent 派发、子 Agent 回报父 Agent、日志与状态追踪贯穿全程”的关系展开。
 
-模块实现、字段关系、调用协议和使用约定见 [Desgin.md](Desgin.md)。
+模块实现、字段关系、调用协议和使用约定见 [Design.md](Design.md)。
 
 详细实施与验收见 [ImplementationPlan.md](ImplementationPlan.md)。检查合同、状态转移、各类预算、控制层超时终态和首版画布范围按该计划的明确规则实现，以下总览保持父 Agent 派发、接收和检测的统一关系。
 

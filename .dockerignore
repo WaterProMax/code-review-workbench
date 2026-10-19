@@ -1,0 +1,27 @@
+# Backend image context is the repository root.
+frontend
+data
+.git
+.github
+examples
+docs
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.vite
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+*.md
+.DS_Store

@@ -155,7 +155,7 @@ def _fixer_spec() -> AgentSpec:
         supported_task_kinds=["fix"],
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        tool_names=["list_files", "read_file", "search_code", "read_artifact", "submit_patch"],
+        tool_names=["list_files", "read_file", "search_code", "read_artifact"],
         permissions=["read_workspace", "produce_patch"],
         produced_artifact_types=["patch"],
         required_input_keys=["source", "acceptance_contract", "findings"],

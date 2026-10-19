@@ -407,6 +407,19 @@ export interface TerminateResponse {
   skipped_tasks: string[];
 }
 
+export interface CancelRequest {
+  expected_revision: number;
+  reason?: string;
+}
+
+export interface CancelResponse {
+  root_task_id: string;
+  status: RootStatus;
+  revision: number;
+  reason: string;
+  signalled: boolean;
+}
+
 /** Artifact payload shapes the workbench renders. */
 
 export interface Finding {

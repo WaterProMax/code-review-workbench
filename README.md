@@ -1,6 +1,6 @@
-# Homework 2 — 父 Agent 管理的代码审查与修复工作台
+# 代码审查与修复工作台
 
-在 `Test2` 中独立实现的代码审查与修复工作台：用户上传一个或多个 Python 文件并输入检查目标，
+在目录 `Test2` 中独立实现：用户上传一个或多个 Python 文件并输入检查目标，
 父 Agent 建立总任务与子任务，按需派发**审查 / 修复 / 验证**子 Agent，接收回报后做确定性检测并决定下一步；
 全过程的派发、尝试、工具调用、回报与决策事件都可追踪、可查询、可恢复。
 
@@ -12,12 +12,51 @@
 | 文件 | 内容 |
 |---|---|
 | [Architecture.md](Architecture.md) | 父 Agent 与子任务架构、流程图与结束规则 |
-| [Desgin.md](Desgin.md) | 模块、字段、协议与接口设计 |
+| [Design.md](Design.md) | 模块、字段、协议与接口设计 |
 | [ImplementationPlan.md](ImplementationPlan.md) | P00–P12 详细实施与验收计划 |
 | [docs/API.md](docs/API.md) | HTTP 接口说明 |
 | [docs/AgentExtension.md](docs/AgentExtension.md) | 新增 Agent 的接入步骤与改动清单 |
 | [docs/Acceptance.md](docs/Acceptance.md) | 验收场景 A01–A37 的实际结果与证据 |
 | [docs/Handoff.md](docs/Handoff.md) | 完成情况、关键实现选择、已知限制与下一步 |
+| [docs/Docker.md](docs/Docker.md) | `make demo` 一键演示 |
+
+## 架构
+
+执行图由 `backend/app/workflow/builder.py` 的 `build_graph` 编译。下图与当前 `draw_mermaid()` 的节点和边一致：实线是固定边，虚线是条件边或 `Command` 出边。业务步数在 `budget` 判断，框架超步上限是 `recursion_limit`。终态集合 `TERMINAL_ROOT_STATUSES` 由同目录 `nodes.py` 提供，当前为 `completed`、`partial`、`failed`。
+
+结案条件成立时，`check_finish` 同时进入 `finalize` 和 END。`finalize` 写报告，它自己只有一条出边到 END。
+
+```mermaid
+flowchart TD
+  startNode([START]) --> initialize
+  initialize -->|致命错误| planWait[wait]
+  initialize -->|已有合同| budget
+  initialize -->|否则| plan
+  plan --> validate_plan
+  validate_plan -->|计划合法| commit_plan
+  validate_plan -->|仍可纠正| replan
+  validate_plan -->|纠正次数用尽| planWait
+  replan --> validate_plan
+  commit_plan --> budget
+  budget -->|步数未超限| parent_decide
+  budget -->|步数达到上限| planWait
+  parent_decide --> validate_action
+  validate_action -->|dispatch_task 或 dispatch_batch| dispatch
+  validate_action -->|apply_patch| apply_patch
+  validate_action -->|finish| check_finish
+  validate_action -->|wait_for_recovery| planWait
+  validate_action -->|无动作、未知或被拒绝| budget
+  dispatch -->|派发成功| collect_results
+  dispatch -->|被拒绝或额度不足| budget
+  collect_results --> detect
+  apply_patch --> detect
+  detect --> budget
+  check_finish -->|结案条件成立| finalize
+  check_finish -->|结案被拒绝| budget
+  check_finish -->|结案条件成立| graphEnd([END])
+  finalize --> graphEnd
+  planWait --> graphEnd
+```
 
 ## 运行环境
 
@@ -98,11 +137,15 @@ curl -s http://127.0.0.1:8000/api/health
 
 ```bash
 # 后端
-cd backend && uv run pytest
+cd backend && uv run pytest -q
 
 # 前端
-cd frontend && npm run test
+cd frontend && npm test
 ```
+
+2026-10-19 实测：后端 **245 passed**（`cd backend && uv run pytest -q`），前端 **19 passed**（`cd frontend && npm test`）。
+
+运行中的任务详情优先用 `GET /api/tasks/{id}/stream` 收事件；浏览器没有 `EventSource` 或连接失败时继续轮询。`queued` / `running` 可 `POST /api/tasks/{id}/cancel`，任务进入 `waiting_recovery` 后再恢复或终止。字段见 [docs/API.md](docs/API.md) 第 8 节。
 
 ## 数据目录
 
@@ -176,5 +219,5 @@ HW2_DATA_DIR=../data/demo ../scripts/dev-backend.sh          # 用演示数据�
 ## 当前进度
 
 阶段完成情况与证据见 `docs/Acceptance.md` 与 `docs/RepairReport-2026-10-08.md`。
-真实模型四场景与 A15 已通过；最新浏览器联调又修复了画布、长表格和恢复决策问题，
-后端 216 项、前端 13 项测试通过，生产构建成功，详见 `docs/FrontendTest-2026-10-08.md`。
+真实模型四场景与 A15 已通过；浏览器联调修复了画布、长表格和恢复决策问题，
+详见 `docs/FrontendTest-2026-10-08.md`。自动化测试的当前计数见上文「测试」。

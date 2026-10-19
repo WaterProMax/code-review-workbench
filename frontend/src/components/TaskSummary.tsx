@@ -1,8 +1,21 @@
+import { useEffect, useState } from "react";
 import type { TaskDetailResponse } from "../api/types";
-import { formatTime, rootStatusToken, verdictToken } from "../display";
+import { formatAge, formatTime, rootStatusToken, verdictToken } from "../display";
 import { StatusBadge } from "./Badges";
 
-export function TaskSummary({ detail }: { detail: TaskDetailResponse }) {
+export function TaskSummary({
+  detail,
+  updatedAt,
+}: {
+  detail: TaskDetailResponse;
+  updatedAt?: number | null;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!updatedAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [updatedAt]);
   return (
     <section className="panel">
       <h2>任务总览</h2>
@@ -20,6 +33,7 @@ export function TaskSummary({ detail }: { detail: TaskDetailResponse }) {
             <th>执行状态</th>
             <td>
               <StatusBadge token={rootStatusToken(detail.status)} />
+              {updatedAt ? <span className="muted"> 最后更新于 {formatAge(updatedAt, now)}</span> : null}
             </td>
           </tr>
           <tr>

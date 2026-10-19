@@ -596,7 +596,9 @@ class ParentController:
             workflow=workflow,
             source_version=source_version,
             contract_version=contract_version,
-            retry_reasons=[self.retry_reason(item) for item in items],
+            retry_reasons=[
+                self.retry_reason(item, source_version=source_version) for item in items
+            ],
             operation_key=operation_key,
             fencing_token=fencing_token,
         )
@@ -608,7 +610,7 @@ class ParentController:
             tasks=[t for t in tasks if t is not None],
         )
 
-    def retry_reason(self, item: DispatchItem) -> str:
+    def retry_reason(self, item: DispatchItem, *, source_version: str | None = None) -> str:
         """Derive the retry reason from what actually happened last time (§9.4).
 
         The reason decides which budgets a new attempt consumes, so it must come
@@ -629,6 +631,8 @@ class ParentController:
             return RetryReason.EXECUTION_FAULT.value
         if item.task_kind == TaskKind.FIX.value:
             return RetryReason.BUSINESS_REPAIR.value
+        if source_version and last.source_version != source_version:
+            return RetryReason.NEW_VERSION_REVERIFY.value
         return RetryReason.INSUFFICIENT_EVIDENCE.value
 
     def build_envelope(

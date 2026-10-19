@@ -18,6 +18,7 @@ from app.schemas.artifacts import Patch, PatchApplication
 from app.schemas.common import ErrorInfo
 from app.schemas.enums import (
     ApplicablePhase,
+    CheckMethod,
     CheckStatus,
     DetectionCategory,
     ErrorCategory,
@@ -173,11 +174,26 @@ class Detector:
         self, root_task_id: str, finding: Finding, source_version: str
     ) -> bool:
         if not finding.check_id:
-            return True
+            return False
         result = self.repos.check_results.latest_for_check(
             root_task_id, finding.check_id, source_version
         )
-        return result is not None and result.status is CheckStatus.PASSED
+        if result is None or result.status is not CheckStatus.PASSED:
+            return False
+        if result.method is CheckMethod.BEHAVIOR_TEST:
+            return self._reproduction_proven(result)
+        return True
+
+    def _reproduction_proven(self, result: CheckResult) -> bool:
+        """A behavior finding closes only when a frozen reproduction test passed."""
+        for ref in result.evidence_refs:
+            try:
+                proof = self.artifacts.read_json(ref)
+            except Exception:  # noqa: BLE001 - non-JSON evidence cannot prove a reproduction
+                continue
+            if proof.get("reproduction_frozen") and int(proof.get("regression_count") or 0) > 0:
+                return True
+        return False
 
     def patch_fingerprint(self, patch_ref: str | None) -> str | None:
         if not patch_ref:

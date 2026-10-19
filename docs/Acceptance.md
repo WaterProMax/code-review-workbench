@@ -144,4 +144,4 @@ cd backend
 - 中断驱动子进程：`backend/tests/e2e/interruption_driver.py`（顺序）、
   `backend/tests/e2e/interruption_driver_parallel.py`（并行，A15）。
 - 设计取舍与已知限制：`docs/Handoff.md`「已知限制」「未完成项」。
-- 接口与字段语义：`docs/API.md`、`Desgin.md`、`Architecture.md`。
+- 接口与字段语义：`docs/API.md`、`Design.md`、`Architecture.md`。

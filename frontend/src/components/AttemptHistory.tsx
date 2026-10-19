@@ -8,6 +8,17 @@ import {
 } from "../display";
 import { StatusBadge } from "./Badges";
 
+function attemptVerdict(attempt: AttemptView) {
+  if (
+    attempt.task_kind === "fix" &&
+    attempt.result?.status === "completed" &&
+    attempt.result.passed == null
+  ) {
+    return { label: "补丁已生成（待验证）", className: "badge waiting" };
+  }
+  return verdictToken(attempt.result ? attempt.result.passed : null);
+}
+
 export function AttemptHistory({ attempts }: { attempts: AttemptView[] }) {
   if (attempts.length === 0) {
     return <p className="muted">该子任务还没有执行尝试。</p>;
@@ -36,7 +47,7 @@ export function AttemptHistory({ attempts }: { attempts: AttemptView[] }) {
               <StatusBadge token={attemptStatusToken(attempt.status)} />
             </td>
             <td>
-              <StatusBadge token={verdictToken(attempt.result ? attempt.result.passed : null)} />
+              <StatusBadge token={attemptVerdict(attempt)} />
             </td>
             <td className="mono">{attempt.source_version}</td>
             <td className="mono">

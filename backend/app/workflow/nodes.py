@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any
+from typing import Any, Literal
+
+from langgraph.graph import END
+from langgraph.types import Command
 
 from app.agents.base import AgentContext
 from app.agents.parent import ParentAgent, ParentPlan
@@ -52,6 +55,22 @@ TERMINAL_ROOT_STATUSES = {
     RootStatus.PARTIAL.value,
     RootStatus.FAILED.value,
 }
+
+
+def action_goto(next_action: dict | None) -> str:
+    """Successor of an already validated parent action.
+
+    Missing or unknown actions go back through the step-budget gate.
+    """
+    if not isinstance(next_action, dict):
+        return "budget"
+    return {
+        "dispatch_task": "dispatch",
+        "dispatch_batch": "dispatch",
+        "apply_patch": "apply_patch",
+        "wait_for_recovery": "wait",
+        "finish": "check_finish",
+    }.get(str(next_action.get("action") or ""), "budget")
 
 
 class WorkflowRuntime:
@@ -180,7 +199,41 @@ class WorkflowRuntime:
             "feedback": [f"动作被拒绝：{message}"],
         }
 
-    # ---- initialize --------------------------------------------------------
+    # ---- routing (conditional edges the diagram must show) ----------------
+    def route_after_initialize(self, state: dict) -> Literal["wait", "plan", "budget"]:
+        if state.get("fatal_error"):
+            return "wait"
+        if state.get("contract"):
+            return "budget"
+        return "plan"
+
+    def route_after_validate_plan(self, state: dict) -> Literal["replan", "commit_plan", "wait"]:
+        if not state.get("plan_problems"):
+            return "commit_plan"
+        if int(state.get("plan_corrections") or 0) < self.settings.max_parent_corrections:
+            return "replan"
+        return "wait"
+
+    def route_after_budget(self, state: dict) -> Literal["wait", "parent_decide"]:
+        steps, limit = self._next_graph_step(state)
+        return "wait" if steps > limit else "parent_decide"
+
+    def _next_graph_step(self, state: dict) -> tuple[int, int]:
+        """The business step the next parent decision would consume, and its grant.
+
+        This ledger is ``graph_steps`` / ``graph_steps_granted``. It is not the
+        framework ``recursion_limit``.
+        """
+        steps = int(state.get("graph_steps") or 0) + 1
+        control = self.repos.controls.get(state["root_task_id"])
+        limit = control.graph_steps_granted if control else self.workflow.budgets.max_graph_steps
+        return steps, limit
+
+    def _plan_files(self, state: dict) -> list[str]:
+        version = state.get("initial_source_version") or state.get("source_version")
+        return self.workspace.list_files(state["root_task_id"], version)
+
+    # ---- initialize / plan correction --------------------------------------
     async def n_initialize(self, state: dict) -> dict:
         root_task_id = state["root_task_id"]
         goal = state["goal"]
@@ -193,91 +246,131 @@ class WorkflowRuntime:
                 root_task_id=root_task_id,
             )
         self.repos.tasks.update(root_task_id, status=RootStatus.RUNNING.value)
+        steps = int(state.get("graph_steps") or 0) + 1
 
         contract_row = self.repos.contracts.latest(root_task_id)
-        if contract_row is not None:
-            contract = AcceptanceContract.model_validate(
-                self.artifacts.read_json(contract_row["artifact_id"])
-            )
-            contract_artifact = contract_row["artifact_id"]
-            plan_scope = state.get("review_scope") or []
-            plan_criteria = state.get("acceptance_criteria") or []
-        else:
-            source_version = state.get("initial_source_version") or state["source_version"]
-            files = self.workspace.list_files(root_task_id, source_version)
-            plan, problems = await self._plan_with_corrections(
-                root_task_id=root_task_id, goal=goal, files=files
-            )
-            if plan is None:
-                return {
-                    "status": RootStatus.WAITING_RECOVERY.value,
-                    "waiting_reason": "父模型未能给出合法的检查合同",
-                    "required_action": "检查目标描述与模型配置后恢复任务",
-                    "fatal_error": {"code": "INVALID_PLAN", "problems": problems},
-                    "graph_steps": int(state.get("graph_steps") or 0) + 1,
-                }
-            contract, contract_artifact = self.controller.persist_contract(
-                root_task_id=root_task_id, goal=goal, checks=plan.checks
-            )
-            plan_scope = plan.review_scope
-            plan_criteria = plan.acceptance_criteria
+        if contract_row is None:
+            # Planning is a graph loop (plan → validate_plan → replan), not an
+            # inner while. One business step covers the whole initialization.
+            return {
+                "status": RootStatus.RUNNING.value,
+                "graph_steps": steps,
+                "plan_corrections": 0,
+                "plan_problems": [],
+                "fatal_error": None,
+            }
 
+        contract = AcceptanceContract.model_validate(
+            self.artifacts.read_json(contract_row["artifact_id"])
+        )
+        contract_artifact = contract_row["artifact_id"]
         self.controller.create_standard_children(
             root_task_id=root_task_id, workflow=self.workflow, goal=goal
         )
-        tree = self._task_tree(root_task_id)
         return {
             "contract": contract.model_dump(mode="json"),
             "contract_version": contract.contract_version,
             "contract_artifact": contract_artifact,
             "acceptance_contract_ref": contract_artifact,
-            "review_scope": plan_scope,
-            "acceptance_criteria": plan_criteria,
-            "task_tree": tree,
+            "review_scope": state.get("review_scope") or [],
+            "acceptance_criteria": state.get("acceptance_criteria") or [],
+            "task_tree": self._task_tree(root_task_id),
             "children_created": True,
             "status": RootStatus.RUNNING.value,
-            "graph_steps": int(state.get("graph_steps") or 0) + 1,
+            "graph_steps": steps,
+            "fatal_error": None,
         }
 
-    async def _plan_with_corrections(
-        self, *, root_task_id: str, goal: str, files: list[str]
-    ) -> tuple[ParentPlan | None, list[str]]:
+    async def n_plan(self, state: dict) -> dict:
+        root_task_id = state["root_task_id"]
+        files = self._plan_files(state)
         plan = await self.parent.plan(
-            root_task_id=root_task_id, goal=goal, files=files, operation_key=root_task_id
+            root_task_id=root_task_id,
+            goal=state["goal"],
+            files=files,
+            operation_key=root_task_id,
         )
-        problems = self.controller.validate_plan(plan.checks, goal=goal, files=files)
-        corrections = 0
-        while problems and corrections < self.settings.max_parent_corrections:
-            plan = await self.parent.replan(
-                root_task_id=root_task_id,
-                goal=goal,
-                files=files,
-                problems=problems,
-                previous=plan,
-                operation_key=root_task_id,
+        return {"draft_plan": plan.model_dump(mode="json"), "plan_problems": []}
+
+    async def n_validate_plan(self, state: dict) -> dict:
+        plan = ParentPlan.model_validate(state["draft_plan"])
+        problems = self.controller.validate_plan(
+            plan.checks, goal=state["goal"], files=self._plan_files(state)
+        )
+        corrections = int(state.get("plan_corrections") or 0)
+        update: dict[str, Any] = {"plan_problems": problems}
+        if problems and corrections >= self.settings.max_parent_corrections:
+            update.update(
+                {
+                    "status": RootStatus.WAITING_RECOVERY.value,
+                    "waiting_reason": "父模型未能给出合法的检查合同",
+                    "required_action": "检查目标描述与模型配置后恢复任务",
+                    "fatal_error": {"code": "INVALID_PLAN", "problems": problems},
+                }
             )
-            corrections += 1
-            problems = self.controller.validate_plan(plan.checks, goal=goal, files=files)
-        if problems:
-            return None, problems
-        return plan, []
+        else:
+            update["fatal_error"] = None
+        return update
+
+    async def n_replan(self, state: dict) -> dict:
+        root_task_id = state["root_task_id"]
+        previous = ParentPlan.model_validate(state["draft_plan"])
+        plan = await self.parent.replan(
+            root_task_id=root_task_id,
+            goal=state["goal"],
+            files=self._plan_files(state),
+            problems=list(state.get("plan_problems") or []),
+            previous=previous,
+            operation_key=root_task_id,
+        )
+        return {
+            "draft_plan": plan.model_dump(mode="json"),
+            "plan_corrections": int(state.get("plan_corrections") or 0) + 1,
+        }
+
+    async def n_commit_plan(self, state: dict) -> dict:
+        root_task_id = state["root_task_id"]
+        goal = state["goal"]
+        plan = ParentPlan.model_validate(state["draft_plan"])
+        contract, contract_artifact = self.controller.persist_contract(
+            root_task_id=root_task_id, goal=goal, checks=plan.checks
+        )
+        self.controller.create_standard_children(
+            root_task_id=root_task_id, workflow=self.workflow, goal=goal
+        )
+        return {
+            "contract": contract.model_dump(mode="json"),
+            "contract_version": contract.contract_version,
+            "contract_artifact": contract_artifact,
+            "acceptance_contract_ref": contract_artifact,
+            "review_scope": plan.review_scope,
+            "acceptance_criteria": plan.acceptance_criteria,
+            "task_tree": self._task_tree(root_task_id),
+            "children_created": True,
+            "status": RootStatus.RUNNING.value,
+            "plan_problems": [],
+            "fatal_error": None,
+        }
+
+    async def n_budget(self, state: dict) -> dict:
+        """Business step-budget gate. The conditional edge is budget → wait."""
+        steps, limit = self._next_graph_step(state)
+        if steps <= limit:
+            return {}
+        reason = f"图执行步数达到上限 {limit}"
+        required = "追加图执行步数许可后恢复任务"
+        return {
+            "next_action": WaitForRecoveryAction(
+                reason=reason, required_action=required
+            ).model_dump(mode="json"),
+            "waiting_reason": reason,
+            "required_action": required,
+        }
 
     # ---- parent decision ---------------------------------------------------
-    async def n_parent_decide(self, state: dict) -> dict:
+    async def n_parent_decide(self, state: dict) -> Command[Literal["validate_action"]]:
         root_task_id = state["root_task_id"]
         steps = int(state.get("graph_steps") or 0) + 1
-        control = self.repos.controls.get(root_task_id)
-        limit = control.graph_steps_granted if control else self.workflow.budgets.max_graph_steps
-        if steps > limit:
-            return {
-                "next_action": WaitForRecoveryAction(
-                    reason=f"图执行步数达到上限 {limit}",
-                    required_action="追加图执行步数许可后恢复任务",
-                ).model_dump(mode="json"),
-                "waiting_reason": f"图执行步数达到上限 {limit}",
-                "required_action": "追加图执行步数许可后恢复任务",
-                "graph_steps": steps - 1,
-            }
         rejections = self._current_rejections(state)
         if int(state.get("rejection_count") or 0) >= self.settings.max_parent_corrections:
             last = rejections[-1] if rejections else {}
@@ -289,14 +382,17 @@ class WorkflowRuntime:
             else:
                 reason = f"父模型连续给出非法动作：{last.get('message')}"
                 required = "人工检查模型输出或调整工作流配置后恢复任务"
-            return {
-                "next_action": WaitForRecoveryAction(
-                    reason=reason, required_action=required
-                ).model_dump(mode="json"),
-                "waiting_reason": reason,
-                "required_action": required,
-                "graph_steps": steps,
-            }
+            return Command(
+                update={
+                    "next_action": WaitForRecoveryAction(
+                        reason=reason, required_action=required
+                    ).model_dump(mode="json"),
+                    "waiting_reason": reason,
+                    "required_action": required,
+                    "graph_steps": steps,
+                },
+                goto="validate_action",
+            )
 
         decision = await self.parent.decide(
             context=self._decision_context(state),
@@ -312,12 +408,15 @@ class WorkflowRuntime:
                 "detail": action.model_dump(mode="json"),
             },
         )
-        return {
-            "next_action": action.model_dump(mode="json"),
-            "decision_ids": [f"d-{uuid.uuid4().hex[:12]}"],
-            "feedback": [decision.reasoning],
-            "graph_steps": steps,
-        }
+        return Command(
+            update={
+                "next_action": action.model_dump(mode="json"),
+                "decision_ids": [f"d-{uuid.uuid4().hex[:12]}"],
+                "feedback": [decision.reasoning],
+                "graph_steps": steps,
+            },
+            goto="validate_action",
+        )
 
     def _node_ids(self, root_task_id: str) -> dict[str, str]:
         """task_id -> workflow node id.
@@ -435,14 +534,19 @@ class WorkflowRuntime:
         }
 
     # ---- validate action ---------------------------------------------------
-    async def n_validate_action(self, state: dict) -> dict:
+    async def n_validate_action(
+        self, state: dict
+    ) -> Command[Literal["dispatch", "apply_patch", "check_finish", "wait", "budget"]]:
         raw = state.get("next_action")
         if not raw:
-            return {}
+            return Command(goto="budget")
         try:
             action = parse_parent_action(raw)
         except Exception as exc:  # noqa: BLE001 - an unparseable proposal is rejected
-            return self._reject(state, "UNPARSEABLE_ACTION", f"动作无法解析：{exc}")
+            return Command(
+                update=self._reject(state, "UNPARSEABLE_ACTION", f"动作无法解析：{exc}"),
+                goto="budget",
+            )
 
         problems = self.controller.validate_action(
             action,
@@ -451,8 +555,11 @@ class WorkflowRuntime:
             source_version=state["source_version"],
         )
         if problems:
-            return self._reject(
-                state, "ILLEGAL_ACTION", "; ".join(problems), details={"action": raw}
+            return Command(
+                update=self._reject(
+                    state, "ILLEGAL_ACTION", "; ".join(problems), details={"action": raw}
+                ),
+                goto="budget",
             )
 
         update: dict[str, Any] = {"rejection_count": 0}
@@ -460,10 +567,10 @@ class WorkflowRuntime:
             update["waiting_reason"] = action.reason
             update["required_action"] = action.required_action
             update["passed"] = action.known_passed
-        return update
+        return Command(update=update, goto=action_goto(raw))
 
     # ---- dispatch ----------------------------------------------------------
-    async def n_dispatch(self, state: dict) -> dict:
+    async def n_dispatch(self, state: dict) -> Command[Literal["collect_results", "budget"]]:
         root_task_id = state["root_task_id"]
         action = parse_parent_action(state["next_action"])
         try:
@@ -478,15 +585,21 @@ class WorkflowRuntime:
                 fencing_token=self.fencing_token,
             )
         except (DispatchRejected, ActionRejected) as exc:
-            return self._reject(
-                state, getattr(exc, "code", "DISPATCH_REJECTED"), str(exc)
+            return Command(
+                update=self._reject(
+                    state, getattr(exc, "code", "DISPATCH_REJECTED"), str(exc)
+                ),
+                goto="budget",
             )
         except BudgetExhausted as exc:
-            return self._reject(
-                state,
-                "BUDGET_EXHAUSTED",
-                f"额度不足，需要追加 {exc.required_additions}",
-                details={"required_additions": exc.required_additions},
+            return Command(
+                update=self._reject(
+                    state,
+                    "BUDGET_EXHAUSTED",
+                    f"额度不足，需要追加 {exc.required_additions}",
+                    details={"required_additions": exc.required_additions},
+                ),
+                goto="budget",
             )
 
         from app.schemas.enums import AttemptStatus, RetryReason
@@ -501,10 +614,13 @@ class WorkflowRuntime:
                     operation_key=f"dispatch-recovery:{plan.batch_id}:{state['run_segment_id']}",
                 )
             except BudgetExhausted as exc:
-                return self._reject(
-                    state, "BUDGET_EXHAUSTED",
-                    f"恢复未完成分支需要追加额度 {exc.required_additions}",
-                    details={"required_additions": exc.required_additions},
+                return Command(
+                    update=self._reject(
+                        state, "BUDGET_EXHAUSTED",
+                        f"恢复未完成分支需要追加额度 {exc.required_additions}",
+                        details={"required_additions": exc.required_additions},
+                    ),
+                    goto="budget",
                 )
             for i, retry in zip(interrupted, retries):
                 plan.attempts[i] = retry
@@ -563,26 +679,29 @@ class WorkflowRuntime:
                 continue
             reports[envelope.attempt_id] = result.model_dump(mode="json")
 
-        return {
-            "results": reports,
-            "attempts": {a.attempt_id: a.model_dump(mode="json") for a in plan.attempts},
-            "pending_attempt_ids": [a.attempt_id for a in plan.attempts],
-            "current_batch_id": plan.batch_id,
-            "dispatch_ok": True,
-            "controller_faults": faults,
-            "dispatch_history": [
-                {
-                    "batch_id": plan.batch_id,
-                    "attempt_ids": [a.attempt_id for a in plan.attempts],
-                    "task_kinds": [t.task_kind for t in plan.tasks],
-                    "action": state["next_action"]["action"],
-                }
-            ],
-            "next_action": None,
-            "last_application": None,
-            "last_application_error": None,
-            "task_tree": self._task_tree(root_task_id),
-        }
+        return Command(
+            update={
+                "results": reports,
+                "attempts": {a.attempt_id: a.model_dump(mode="json") for a in plan.attempts},
+                "pending_attempt_ids": [a.attempt_id for a in plan.attempts],
+                "current_batch_id": plan.batch_id,
+                "dispatch_ok": True,
+                "controller_faults": faults,
+                "dispatch_history": [
+                    {
+                        "batch_id": plan.batch_id,
+                        "attempt_ids": [a.attempt_id for a in plan.attempts],
+                        "task_kinds": [t.task_kind for t in plan.tasks],
+                        "action": state["next_action"]["action"],
+                    }
+                ],
+                "next_action": None,
+                "last_application": None,
+                "last_application_error": None,
+                "task_tree": self._task_tree(root_task_id),
+            },
+            goto="collect_results",
+        )
 
     def _controller_terminal(
         self,
@@ -735,7 +854,8 @@ class WorkflowRuntime:
     async def n_apply_patch(self, state: dict) -> dict:
         root_task_id = state["root_task_id"]
         action = parse_parent_action(state["next_action"])
-        assert isinstance(action, ApplyPatchAction)
+        if not isinstance(action, ApplyPatchAction):
+            return self._reject(state, "ACTION_MISMATCH", "当前节点只接受 apply_patch")
         try:
             application = self.controller.apply_patch(action, root_task_id=root_task_id)
         except (PatchRejected, ActionRejected) as exc:
@@ -854,15 +974,24 @@ class WorkflowRuntime:
             "task_tree": self._task_tree(root_task_id),
         }
 
-    # ---- finalize ----------------------------------------------------------
-    async def n_finalize(self, state: dict) -> dict:
+    # ---- finish gate -------------------------------------------------------
+    def _assess_finish(self, state: dict) -> tuple[dict | None, dict | None]:
+        """Decide whether a finish proposal may close the task.
+
+        Returns ``(reject_update, sketch)``. The reject update already records
+        the denial. The sketch is the accepted verdict; it has no side effects.
+        """
         root_task_id = state["root_task_id"]
-        action = parse_parent_action(state["next_action"])
-        assert isinstance(action, FinishAction)
+        raw = state.get("next_action")
+        try:
+            action = parse_parent_action(raw)
+        except Exception as exc:  # noqa: BLE001 - an unparseable proposal is rejected
+            return self._reject(state, "UNPARSEABLE_ACTION", f"动作无法解析：{exc}"), None
+        if not isinstance(action, FinishAction):
+            return self._reject(state, "ACTION_MISMATCH", "当前节点只接受 finish"), None
         contract = self._contract(state)
         source_version = state["source_version"]
-        patched = bool(state.get("patched"))
-        required_ids = self.detector.required_check_ids(contract, patched=patched)
+        required_ids = self.detector.required_check_ids(contract, patched=bool(state.get("patched")))
 
         if action.proposed_passed:
             can_finish, passed, problems, unresolved = self.task_service.detect_completion(
@@ -871,10 +1000,13 @@ class WorkflowRuntime:
                 required_check_ids=required_ids,
             )
             if not (can_finish and passed is True):
-                return self._reject(
-                    state,
-                    "FINISH_NOT_SATISFIED",
-                    "; ".join(problems) or "完成条件尚未满足，不能标记通过",
+                return (
+                    self._reject(
+                        state,
+                        "FINISH_NOT_SATISFIED",
+                        "; ".join(problems) or "完成条件尚未满足，不能标记通过",
+                    ),
+                    None,
                 )
             unfixable_reason = None
         else:
@@ -887,18 +1019,52 @@ class WorkflowRuntime:
                 required_check_ids=required_ids,
             )
             if not confirmed:
-                return self._reject(
-                    state,
-                    "FINISH_NOT_SUPPORTED",
-                    "证据不足以判定不通过：当前版本缺少明确失败的必需检查（应进入等待或补查）",
+                return (
+                    self._reject(
+                        state,
+                        "FINISH_NOT_SUPPORTED",
+                        "证据不足以判定不通过：当前版本缺少明确失败的必需检查（应进入等待或补查）",
+                    ),
+                    None,
                 )
             if self.task_service.has_in_flight_work(root_task_id):
-                return self._reject(
-                    state, "FINISH_NOT_SUPPORTED", "仍有未结束的执行尝试或未收齐的批次，不能结案"
+                return (
+                    self._reject(
+                        state, "FINISH_NOT_SUPPORTED", "仍有未结束的执行尝试或未收齐的批次，不能结案"
+                    ),
+                    None,
                 )
             passed = False
             unresolved = failed
             unfixable_reason = action.reason
+        return None, {
+            "passed": passed,
+            "unresolved": list(unresolved),
+            "unfixable_reason": unfixable_reason,
+        }
+
+    async def n_check_finish(
+        self, state: dict
+    ) -> Command[Literal["finalize", "budget", "__end__"]]:
+        reject, sketch = self._assess_finish(state)
+        if reject is not None:
+            return Command(update=reject, goto="budget")
+        # finalize writes the report; END is the terminal edge the diagram shows.
+        # finalize itself has no other outgoing edge.
+        return Command(update={"finish_sketch": sketch}, goto=["finalize", END])
+
+    # ---- finalize (only outgoing edge is END) ------------------------------
+    async def n_finalize(self, state: dict) -> dict:
+        root_task_id = state["root_task_id"]
+        sketch = state.get("finish_sketch")
+        if not sketch:
+            raise RuntimeError("finalize 只能在完成条件已经成立时执行")
+        passed = sketch["passed"]
+        unresolved = sketch["unresolved"]
+        unfixable_reason = sketch["unfixable_reason"]
+        contract = self._contract(state)
+        source_version = state["source_version"]
+        patched = bool(state.get("patched"))
 
         skipped = self.controller.finalize_skips(root_task_id=root_task_id, passed=passed)
         latest = self.detector.current_checks(root_task_id, source_version)
