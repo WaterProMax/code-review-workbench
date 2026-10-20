@@ -561,7 +561,8 @@ button.danger {
 
 .badge.interrupted,
 .badge.invalidated,
-.badge.skipped {
+.badge.skipped,
+.badge.cancelled {
   color: #9ca3af;
   background: rgba(156, 163, 175, 0.1);
   border-color: rgba(156, 163, 175, 0.25);
@@ -651,18 +652,23 @@ pre.artifact {
   margin: 10px 0;
 }
 
+.diff-add,
+.diff-del,
+.diff-hunk,
+.diff-ctx {
+  display: block;
+  min-width: 100%;
+  width: max-content;
+}
+
 .diff-add {
   color: #6ee7b7;
   background: rgba(52, 211, 153, 0.07);
-  display: inline-block;
-  width: 100%;
 }
 
 .diff-del {
   color: #fca5a5;
   background: rgba(248, 113, 113, 0.07);
-  display: inline-block;
-  width: 100%;
 }
 
 .diff-hunk {
@@ -671,6 +677,12 @@ pre.artifact {
 
 .diff-ctx {
   color: #b6bfd3;
+}
+
+.diff-counts {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .downloads {
@@ -689,6 +701,99 @@ pre.artifact {
 
 .downloads a:hover {
   text-decoration: underline;
+}
+
+.download-group + .download-group {
+  margin-top: 14px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.tabs a,
+.tabs button {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--muted);
+  border-radius: 8px 8px 0 0;
+  padding: 8px 14px;
+}
+
+.tabs a.active,
+.tabs button.active,
+.tabs a[aria-selected="true"],
+.tabs button[aria-selected="true"] {
+  color: var(--text);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.step-bar {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.step-bar li {
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+.step-bar li:not(:last-child)::after {
+  content: "→";
+  margin-left: 8px;
+  color: var(--muted);
+}
+
+.step-bar li.step-current {
+  color: var(--text);
+  font-weight: 700;
+  background: var(--accent-soft);
+}
+
+.timeline-scroll {
+  overflow-x: auto;
+}
+
+table.event-timeline {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 1128px;
+}
+
+.event-timeline col.col-seq { width: 48px; }
+.event-timeline col.col-time { width: 150px; }
+.event-timeline col.col-role { width: 80px; }
+.event-timeline col.col-event { width: 110px; }
+.event-timeline col.col-ids { width: 160px; }
+.event-timeline col.col-duration { width: 80px; }
+.event-timeline col.col-summary { width: 400px; }
+.event-timeline col.col-artifacts { width: 100px; }
+
+.event-timeline td.summary-cell {
+  min-width: 400px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.developer-view {
+  margin-top: 6px;
+}
+
+.developer-view summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 /* ------------------------------------------------------------ 编排画布 */
@@ -772,12 +877,23 @@ pre.artifact {
 }
 
 .react-flow__edge-text {
-  fill: var(--muted);
-  font-size: 10px;
+  fill: var(--text);
+  font-size: 12px;
 }
 
 .react-flow__edge-textbg {
   fill: #0d1322;
+  stroke: #0d1322;
+  stroke-width: 8px;
+  paint-order: stroke;
+}
+
+.wf-edge.selected .react-flow__edge-text {
+  font-weight: 700;
+}
+
+.wf-edge-conditional path.react-flow__edge-path {
+  stroke-dasharray: 6 4;
 }
 
 .react-flow__controls {

@@ -1,5 +1,6 @@
 import type { CheckSummary, VerificationArtifact } from "../api/types";
 import { checkStatusToken, verdictToken } from "../display";
+import { checkMethodLabel } from "../i18n/zh";
 import { StatusBadge } from "./Badges";
 
 interface Props {
@@ -28,7 +29,7 @@ export function VerificationPanel({ verifications, checks }: Props) {
             <tr key={check.check_id}>
               <td className="mono">{check.check_id}</td>
               <td>{check.goal_ref}</td>
-              <td className="mono">{check.method}</td>
+              <td>{checkMethodLabel(check.method)}</td>
               <td>{check.required ? "必需" : "补充"}</td>
               <td>
                 <StatusBadge token={checkStatusToken(check.status)} />

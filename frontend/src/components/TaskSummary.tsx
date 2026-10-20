@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { TaskDetailResponse } from "../api/types";
-import { formatAge, formatTime, rootStatusToken, verdictToken } from "../display";
+import { errorCategoryLabel, errorCodeLabel, formatAge, formatTime, rootStatusToken, verdictToken } from "../display";
+import { checkModeLabel } from "../i18n/zh";
 import { StatusBadge } from "./Badges";
 
 export function TaskSummary({
@@ -53,7 +54,7 @@ export function TaskSummary({
           <tr>
             <th>工作流 / 模式</th>
             <td className="mono">
-              {detail.workflow_version} / {detail.check_mode}
+              {detail.workflow_version} / {checkModeLabel(detail.check_mode)}
             </td>
           </tr>
           <tr>
@@ -73,7 +74,7 @@ export function TaskSummary({
       )}
       {detail.error && (
         <div className="error-box">
-          {detail.error.code}（{detail.error.category}）：{detail.error.message}
+          {errorCodeLabel(detail.error.code)}（{errorCategoryLabel(detail.error.category)}）：{detail.error.message}
           {detail.error.recoverable ? "（可恢复）" : "（不可自动恢复）"}
         </div>
       )}
