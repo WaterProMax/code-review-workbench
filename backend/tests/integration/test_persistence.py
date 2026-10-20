@@ -19,7 +19,6 @@ from app.schemas.enums import (
     TerminalOrigin,
     TerminalOutcome,
 )
-from app.schemas.events import ExecutionEvent
 from app.schemas.results import TaskResult, TerminalRecord
 from app.schemas.workflows import BudgetConfig
 from app.services.events import EventContext, EventSink

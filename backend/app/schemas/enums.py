@@ -40,6 +40,7 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 
 class AttemptStatus(StrEnum):
@@ -155,6 +156,8 @@ class BudgetKind(StrEnum):
     # declared by the P10 extension sample so a new task kind never falls into an
     # unbounded-retry default (§5, §14.2)
     GENERATE_RETRY = "generate_retry"
+    # Invalid or conflicting patch applications. Not a repair round.
+    PATCH_INVALID = "patch_invalid"
 
 
 class RetryReason(StrEnum):
@@ -166,6 +169,7 @@ class RetryReason(StrEnum):
     NEW_VERSION_REVERIFY = "new_version_reverify"
     POST_PATCH_FIRST_CHECK = "post_patch_first_check"
     INITIAL = "initial"
+    PATCH_INVALID = "patch_invalid"
 
 
 class TerminalOrigin(StrEnum):

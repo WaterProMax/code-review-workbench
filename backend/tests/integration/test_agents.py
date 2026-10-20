@@ -350,11 +350,9 @@ async def test_fixer_submits_a_patch_for_the_current_version(tmp_path) -> None:
         contract_version=ctx["contract"].contract_version,
         input_refs=review_envelope.input_refs.as_mapping(),
     )
-    from app.agents.reviewer import ReviewerAgent
 
     findings_result = await _run_reviewer_for_findings(ctx)
 
-    from app.schemas.tasks import InputRefs
 
     envelope = fx.make_envelope(
         root_task_id=ctx["root"].task_id,
@@ -431,7 +429,6 @@ async def test_fixer_submits_a_patch_for_the_current_version(tmp_path) -> None:
 
 async def _run_reviewer_for_findings(ctx) -> str:
     """Run a reviewer attempt and return the findings artifact id."""
-    from app.agents.reviewer import ReviewerAgent
 
     repos = ctx["repos"]
     review_task = repos.tasks.get("T101")
@@ -493,7 +490,6 @@ async def test_verifier_proves_a_defect_with_a_generated_test(tmp_path) -> None:
     ctx = _setup(tmp_path)
     repos = ctx["repos"]
     verify_task = repos.tasks.get("T103")
-    from app.schemas.tasks import InputRefs
 
     envelope = fx.make_envelope(
         root_task_id=ctx["root"].task_id,

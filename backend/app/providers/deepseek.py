@@ -14,7 +14,6 @@ import time
 import httpx
 
 from app.providers.base import (
-    ChatMessage,
     LLMClient,
     LLMError,
     LLMRequest,
