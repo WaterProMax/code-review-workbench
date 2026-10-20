@@ -15,6 +15,7 @@ import type {
   WorkflowConfig,
   WorkflowListItem,
 } from "../api/types";
+import { RuntimeGraph } from "../components/RuntimeGraph";
 import { WorkflowCanvas } from "../components/WorkflowCanvas";
 import {
   BUDGET_FIELDS,
@@ -40,6 +41,7 @@ export function OrchestrationPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [canvasView, setCanvasView] = useState<"business" | "runtime">("business");
 
   const reloadSaved = useCallback(async () => {
     setSaved(await listWorkflows());
@@ -264,14 +266,39 @@ export function OrchestrationPage() {
 
       <section className="panel">
         <h3>画布</h3>
-        <WorkflowCanvas
-          config={config}
-          layout={layout}
-          issues={issues}
-          selectedNodeId={selectedNodeId}
-          onSelect={setSelectedNodeId}
-          onLayoutChange={(next) => mutate({ layout: next })}
-        />
+        <div className="tabs" role="tablist" aria-label="编排视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={canvasView === "business"}
+            className={canvasView === "business" ? "active" : undefined}
+            onClick={() => setCanvasView("business")}
+          >
+            业务图
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={canvasView === "runtime"}
+            className={canvasView === "runtime" ? "active" : undefined}
+            onClick={() => setCanvasView("runtime")}
+          >
+            运行时图
+          </button>
+        </div>
+        <p className="muted">业务图上的审查、修复、验证由运行时图的 run_attempt 以 Send 并行执行。</p>
+        {canvasView === "business" ? (
+          <WorkflowCanvas
+            config={config}
+            layout={layout}
+            issues={issues}
+            selectedNodeId={selectedNodeId}
+            onSelect={setSelectedNodeId}
+            onLayoutChange={(next) => mutate({ layout: next })}
+          />
+        ) : (
+          <RuntimeGraph config={config} workflowVersion={config.workflow_version} />
+        )}
       </section>
 
       <section className="panel">

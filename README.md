@@ -1,11 +1,10 @@
 # 代码审查与修复工作台
 
-在目录 `Test2` 中独立实现：用户上传一个或多个 Python 文件并输入检查目标，
+代码审查工作台：用户上传一个或多个 Python 文件并输入检查目标，
 父 Agent 建立总任务与子任务，按需派发**审查 / 修复 / 验证**子 Agent，接收回报后做确定性检测并决定下一步；
 全过程的派发、尝试、工具调用、回报与决策事件都可追踪、可查询、可恢复。
 
-编排使用真实的 LangGraph（条件分支、循环、并行、状态归并、SQLite 检查点），
-不依赖、不复制 Test1 的任何代码或运行目录。
+编排使用真实的 LangGraph（条件分支、循环、并行、状态归并、SQLite 检查点）。
 
 ## 文档索引
 
@@ -24,38 +23,42 @@
 
 执行图由 `backend/app/workflow/builder.py` 的 `build_graph` 编译。下图与当前 `draw_mermaid()` 的节点和边一致：实线是固定边，虚线是条件边或 `Command` 出边。业务步数在 `budget` 判断，框架超步上限是 `recursion_limit`。终态集合 `TERMINAL_ROOT_STATUSES` 由同目录 `nodes.py` 提供，当前为 `completed`、`partial`、`failed`。
 
-结案条件成立时，`check_finish` 同时进入 `finalize` 和 END。`finalize` 写报告，它自己只有一条出边到 END。
+一个批次里的每次尝试由 `dispatch` 用 `Send` 扇出到 `run_attempt`，再汇合到 `collect_results`。人工恢复停在 `await_human` 的 `interrupt` 上，恢复时用 `Command(resume=...)` 进入 `budget`，不再伪造 `detect` 节点。`check_finish` 在结案条件成立时只进入 `finalize`，`finalize` 再进入 END。
 
 ```mermaid
 flowchart TD
   startNode([START]) --> initialize
-  initialize -->|致命错误| planWait[wait]
+  initialize -->|致命错误| enter_wait
   initialize -->|已有合同| budget
   initialize -->|否则| plan
   plan --> validate_plan
   validate_plan -->|计划合法| commit_plan
   validate_plan -->|仍可纠正| replan
-  validate_plan -->|纠正次数用尽| planWait
+  validate_plan -->|纠正次数用尽| enter_wait
   replan --> validate_plan
   commit_plan --> budget
   budget -->|步数未超限| parent_decide
-  budget -->|步数达到上限| planWait
+  budget -->|步数达到上限| enter_wait
   parent_decide --> validate_action
   validate_action -->|dispatch_task 或 dispatch_batch| dispatch
   validate_action -->|apply_patch| apply_patch
   validate_action -->|finish| check_finish
-  validate_action -->|wait_for_recovery| planWait
+  validate_action -->|wait_for_recovery| enter_wait
   validate_action -->|无动作、未知或被拒绝| budget
-  dispatch -->|派发成功| collect_results
+  dispatch -->|每个尝试 Send| run_attempt
+  dispatch -->|空批次| collect_results
   dispatch -->|被拒绝或额度不足| budget
+  run_attempt --> collect_results
   collect_results --> detect
   apply_patch --> detect
   detect --> budget
   check_finish -->|结案条件成立| finalize
   check_finish -->|结案被拒绝| budget
-  check_finish -->|结案条件成立| graphEnd([END])
-  finalize --> graphEnd
-  planWait --> graphEnd
+  finalize --> graphEnd([END])
+  enter_wait --> await_human
+  await_human -->|恢复| budget
+  await_human -->|终止| finalize_terminated
+  finalize_terminated --> graphEnd
 ```
 
 ## 运行环境
@@ -93,7 +96,7 @@ npm install
 复制示例环境文件并按需修改；**只有后端**读取模型密钥。
 
 ```bash
-cp .env.example .env            # 在 Test2 根目录（或放到 backend/.env）
+cp .env.example .env            # 在仓库根目录（或放到 backend/.env）
 ```
 
 关键变量（完整列表见 `.env.example`）：
@@ -103,7 +106,7 @@ cp .env.example .env            # 在 Test2 根目录（或放到 backend/.env�
 | `HW2_MODEL_BASE_URL` | 模型服务地址，默认 `https://api.deepseek.com` |
 | `HW2_MODEL_NAME` | 模型名，默认 `deepseek-chat` |
 | `HW2_MODEL_API_KEY` | 模型密钥；**未配置时**可打开工作台、查看已有任务，但提交新的模型任务会返回明确的配置错误，不会伪造成功 |
-| `HW2_DATA_DIR` | 运行数据目录，默认 `<Test2>/data` |
+| `HW2_DATA_DIR` | 运行数据目录，默认仓库下的 `data` |
 
 服务端对各项额度设有上限：配置只能收紧、不能突破上限；前端无法提高上限。
 
@@ -143,13 +146,13 @@ cd backend && uv run pytest -q
 cd frontend && npm test
 ```
 
-2026-10-19 实测：后端 **245 passed**（`cd backend && uv run pytest -q`），前端 **19 passed**（`cd frontend && npm test`）。
+2026-10-20 实测（Linux）：`cd backend && uv run pytest -q` 收集 253 项。用户线程数低于沙箱 `RLIMIT_NPROC=256` 时为 **253 passed**；本机用户线程已超过该上限时，`test_timeout_reaps_descendants` 与 `test_cancelled_check_reaps_descendants` 因 `BlockingIOError` 失败（251 passed, 2 failed）。计数依赖环境（Linux，沙箱测试需要 bubblewrap）。
 
 运行中的任务详情优先用 `GET /api/tasks/{id}/stream` 收事件；浏览器没有 `EventSource` 或连接失败时继续轮询。`queued` / `running` 可 `POST /api/tasks/{id}/cancel`，任务进入 `waiting_recovery` 后再恢复或终止。字段见 [docs/API.md](docs/API.md) 第 8 节。
 
 ## 数据目录
 
-运行数据默认写入 `Test2/data`（已加入忽略规则），互相隔离：
+运行数据默认写入仓库下的 `data`（已加入忽略规则），互相隔离：
 
 ```
 data/

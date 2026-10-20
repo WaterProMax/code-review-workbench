@@ -14,7 +14,8 @@ from app.registry.tools import ToolContext, ToolError, ToolResult
 from app.schemas.artifacts import Patch, StructuredEdit
 from app.schemas.enums import ArtifactType, PatchFormat
 from app.services.tools.common import require_path_in_scope
-from app.services.workspace import is_protected_test_path, parse_unified_diff
+from app.services.tools.tamper import find_tampering, reject_patch_text
+from app.services.workspace import DiffError, is_protected_test_path, parse_unified_diff
 
 
 class SubmitPatchArgs(BaseModel):
@@ -57,7 +58,10 @@ async def submit_patch(ctx: ToolContext, args: SubmitPatchArgs) -> ToolResult:
     except Exception as exc:  # noqa: BLE001 - reported to the agent as bad input
         raise ToolError("PATCH_INVALID", f"补丁结构不合法：{exc}") from exc
 
-    paths = _target_paths(patch)
+    try:
+        paths = _target_paths(patch)
+    except DiffError as exc:
+        raise ToolError("PATCH_INVALID", f"补丁无法解析：{exc}") from exc
     for path in paths:
         require_path_in_scope(ctx, path)
     protected = sorted(p for p in paths if is_protected_test_path(p))
@@ -67,6 +71,21 @@ async def submit_patch(ctx: ToolContext, args: SubmitPatchArgs) -> ToolResult:
             f"候选补丁不得修改已有验收测试或测试发现配置：{protected}；"
             "确需改变验收测试请新建任务",
         )
+
+    tamper_hits = reject_patch_text(args.diff_text or "")
+    for edit in args.edits:
+        tamper_hits.extend(find_tampering([edit.file_path, *edit.replace.splitlines()]))
+    if tamper_hits:
+        raise ToolError(
+            "PATCH_REJECTED",
+            "补丁被拒绝：TEST_TAMPERING " + "; ".join(tamper_hits[:12]),
+        )
+
+    # Dry-run against the current snapshot before any artifact or budget change.
+    try:
+        ctx.workspace.preview_patch(ctx.root_task_id, ctx.source_version, patch)
+    except (DiffError, SyntaxError, UnicodeDecodeError, KeyError, OSError) as exc:
+        raise ToolError("PATCH_INVALID", f"补丁无法应用到当前版本：{exc}") from exc
 
     patch = patch.model_copy(update={"patch_id": f"P-{_short(ctx)}"})
     artifact = ctx.artifacts.save_json(

@@ -156,7 +156,7 @@ async def test_graph_runs_on_the_real_sqlite_checkpointer(
     from app.storage.checkpoints import open_checkpointer, thread_id_for
 
     root_task_id = "T-ckpt-001"
-    thread_id = thread_id_for(root_task_id)
+    _thread_id = thread_id_for(root_task_id)
     async with open_checkpointer(settings.checkpoints_db_path) as checkpointer:
         final, _ = await run_workflow(
             settings=settings,

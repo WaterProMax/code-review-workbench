@@ -8,11 +8,13 @@ snapshot, and returns 202 while a background run drives the graph.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import zipfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.api.deps import AppServices, services
 from app.api.errors import AppError
@@ -43,7 +45,9 @@ from app.schemas.enums import (
     TaskLevel,
 )
 from app.schemas.results import AcceptanceContract, CheckSummary, DetectionResult, Finding
+from app.services.checkpoint_nodes import current_nodes
 from app.services.execution_locks import request_fingerprint
+from app.services.report_markdown import render_report_markdown
 from app.storage.repositories import ConflictError
 
 router = APIRouter(tags=["tasks"])
@@ -184,7 +188,7 @@ async def submit_task(
             ErrorCode.CONFIG_MODE_CONFLICT,
             f"工作流 {payload.workflow_version} 的模式是 {workflow.check_mode.value}",
         )
-    svc.runner.ensure_model_ready()
+    await svc.runner.ensure_model_ready()
 
     try:
         root, source_version, source_artifact, reused = svc.governance.controller.initialize_task(
@@ -286,6 +290,16 @@ async def task_detail(request: Request, root_task_id: str) -> TaskDetailResponse
         checks=_check_summaries(svc, root_task_id, contract, source_version) if contract else [],
         budgets=_budget_status(svc, root_task_id, workflow.budgets),
         artifact_refs=[a.artifact_id for a in artifacts],
+        current_nodes=await current_nodes(
+            settings=svc.settings,
+            repos=svc.repos,
+            root_task_id=root_task_id,
+            artifacts=svc.artifacts,
+            workspace=svc.workspace,
+            locks=svc.locks,
+            registry=svc.registry,
+            extensions=svc.extensions,
+        ),
         created_at=root.created_at or datetime.now(timezone.utc),
         updated_at=root.updated_at or datetime.now(timezone.utc),
     )
@@ -342,7 +356,6 @@ async def task_events(
     svc = services(request)
     root = _root_or_404(svc, root_task_id)
     events = svc.repos.events.list_after(root_task_id, after_seq, limit=limit)
-    last = svc.repos.events.max_sequence(root_task_id)
     status = RootStatus.RUNNING.value if svc.runner.is_running(root_task_id) else root.status
     return EventsResponse(
         root_task_id=root_task_id,
@@ -381,14 +394,16 @@ async def iter_task_events(
     while True:
         if await request.is_disconnected():
             return
-        events = svc.repos.events.list_after(root_task_id, cursor, limit=200)
+        events = await asyncio.to_thread(
+            svc.repos.events.list_after, root_task_id, cursor, 200
+        )
         if events:
             for event in events:
                 cursor = event.sequence
                 payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
-                yield f"data: {payload}\n\n"
+                yield f"id: {event.sequence}\ndata: {payload}\n\n"
             continue
-        status = _stream_status(svc, root_task_id)
+        status = await asyncio.to_thread(_stream_status, svc, root_task_id)
         if status is None or status in _TERMINAL_STREAM_STATUSES:
             return
         yield ": heartbeat\n\n"
@@ -400,11 +415,13 @@ async def task_stream(
     request: Request,
     root_task_id: str,
     after_seq: int = Query(default=0, ge=0),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     svc = services(request)
     _root_or_404(svc, root_task_id)
+    cursor = _sse_cursor(after_seq, last_event_id)
     return StreamingResponse(
-        iter_task_events(request, svc, root_task_id, after_seq),
+        iter_task_events(request, svc, root_task_id, cursor),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -470,7 +487,7 @@ async def resume_task(
     key = _require_key(idempotency_key, "恢复任务")
     root = _root_or_404(svc, root_task_id)
     workflow = svc.workflow(root.workflow_version)
-    svc.runner.ensure_model_ready()
+    await svc.runner.ensure_model_ready()
     try:
         outcome = svc.governance.recovery.resume(
             root_task_id,
@@ -571,26 +588,91 @@ async def cancel_task(
 @router.get("/tasks/{root_task_id}/report", response_model=ReportResponse)
 async def task_report(request: Request, root_task_id: str) -> ReportResponse:
     svc = services(request)
-    root = _root_or_404(svc, root_task_id)
+    _root_or_404(svc, root_task_id)
     row = svc.repos.reports.latest(root_task_id, "final")
     if row is None or not row["artifact_id"]:
         raise AppError(ErrorCode.NOT_FOUND, "任务尚未生成最终报告")
     report = svc.artifacts.read_json(row["artifact_id"])
+    markdown = render_report_markdown(
+        report,
+        repos=svc.repos,
+        artifacts=svc.artifacts,
+        root_task_id=root_task_id,
+    )
     return ReportResponse(
         root_task_id=root_task_id,
         final_status=row["final_status"],
         passed=row["passed"],
         conclusion_scope=report.get("conclusion_scope", ""),
         report=report,
-        markdown=None,
+        markdown=markdown,
         report_artifact_id=row["artifact_id"],
         artifact_refs=list(report.get("artifact_refs", [])),
+    )
+
+
+@router.get("/tasks/{root_task_id}/report.md")
+async def task_report_markdown(request: Request, root_task_id: str) -> Response:
+    svc = services(request)
+    _root_or_404(svc, root_task_id)
+    row = svc.repos.reports.latest(root_task_id, "final")
+    if row is None or not row["artifact_id"]:
+        raise AppError(ErrorCode.NOT_FOUND, "任务尚未生成最终报告")
+    report = svc.artifacts.read_json(row["artifact_id"])
+    markdown = render_report_markdown(
+        report,
+        repos=svc.repos,
+        artifacts=svc.artifacts,
+        root_task_id=root_task_id,
+    )
+    filename = f"{root_task_id}-report.md"
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/tasks/{root_task_id}/source.zip")
+async def task_source_zip(
+    request: Request,
+    root_task_id: str,
+    version: str | None = Query(default=None),
+) -> Response:
+    svc = services(request)
+    _root_or_404(svc, root_task_id)
+    source_version = version or svc.governance.recovery.current_source_version(root_task_id)
+    if not source_version:
+        raise AppError(ErrorCode.NOT_FOUND, "任务没有可下载的源码版本")
+    try:
+        files = svc.workspace.snapshot_files(root_task_id, source_version)
+    except (KeyError, ValueError) as exc:
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            f"版本 {source_version} 不属于任务 {root_task_id}",
+        ) from exc
+    blob = io.BytesIO()
+    with zipfile.ZipFile(blob, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(files):
+            archive.writestr(path, files[path])
+    filename = f"{root_task_id}-{source_version[:8]}-fixed.zip"
+    return Response(
+        content=blob.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
 # --------------------------------------------------------------------------- #
 # error mapping
 # --------------------------------------------------------------------------- #
+def _sse_cursor(after_seq: int, last_event_id: str | None) -> int:
+    """``Last-Event-ID`` wins when it is an integer; events after it are sent."""
+    if last_event_id is not None and last_event_id.strip().isdigit():
+        return int(last_event_id.strip())
+    return after_seq
+
+
 def _raise_recovery_error(exc: Exception) -> None:
     code = getattr(exc, "code", None)
     if code in ("NOT_RESUMABLE",):

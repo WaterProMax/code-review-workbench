@@ -8,6 +8,7 @@ import pytest
 
 
 from app.schemas.api import ResumeRequest
+from app.schemas.enums import EventType
 from app.storage.checkpoints import open_checkpointer
 from app.workflow.runner import WorkflowRunner
 from tests.fixtures.workflow import sequential_workflow, prepare_source, build_harness, make_scripted_client, BUGGY_SOURCE, MUTABLE_DEFAULT_FINDING
@@ -75,7 +76,14 @@ async def test_resume_keeps_denial_audit_without_reusing_old_corrections(setting
         assert contexts[before]["action_rejections"] == []
         first_decision = next(r for r in llm.calls[call_count:] if r.script_key == "parent:decide")
         assert len(first_decision.messages) == 1
-        assert second["action_rejections"] == old_denials
+        # The new segment's channel is empty. The denials stay in the event table.
+        assert second["action_rejections"] == []
+        denied = [
+            event
+            for event in repos.events.list_after(root_id, 0, limit=2000)
+            if event.event_type is EventType.ACTION_REJECTED
+        ]
+        assert len(denied) >= len(old_denials)
 
 
 def test_stale_agent_result_rejected(repos, locks):
@@ -133,11 +141,20 @@ async def test_baseline_proof_and_unchanged_regression(settings, repos, artifact
 
 def test_timeout_reaps_descendants(tmp_path):
     from app.services.tools.test_executor import run_pytest
-    marker = tmp_path/'escaped.txt'
-    child = 'import time; from pathlib import Path; time.sleep(2); Path('+repr(str(marker))+').write_text("alive")'
-    code = 'import subprocess,sys,time\ndef test_spawn():\n    subprocess.Popen([sys.executable, "-c", '+repr(child)+'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n    time.sleep(10)\n'
-    (tmp_path/'test_spawn.py').write_text(code)
-    outcome = run_pytest(tmp_path, ['test_spawn.py'], 1)
+    # The sandbox bind-mounts the workdir at /work, so the grandchild marker has
+    # to live there to be visible both inside bwrap and to this assertion.
+    marker = tmp_path / "escaped.txt"
+    child = "import time; from pathlib import Path; time.sleep(2); Path('/work/escaped.txt').write_text('alive')"
+    code = (
+        "import subprocess, sys, time\n"
+        "def test_spawn():\n"
+        "    subprocess.Popen([sys.executable, '-c', "
+        + repr(child)
+        + "], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        "    time.sleep(10)\n"
+    )
+    (tmp_path / "test_spawn.py").write_text(code)
+    outcome = run_pytest(tmp_path, ["test_spawn.py"], 1)
     time.sleep(2)
     assert outcome.timed_out and not marker.exists()
 
@@ -199,7 +216,10 @@ def test_named_evidence_is_immutable(artifacts, repos):
 
 
 @pytest.mark.asyncio
-async def test_cancelled_check_reaps_descendants(settings, repos, artifacts, workspace, tmp_path):
+async def test_cancelled_check_reaps_descendants(settings, repos, artifacts, workspace, tmp_path, monkeypatch):
+    import shutil
+    import tempfile
+    from pathlib import Path
     from app.registry.tools import ToolContext
     from app.schemas.results import CheckSpec
     from app.services.tools.checks import run_checks, RunChecksArgs
@@ -208,23 +228,44 @@ async def test_cancelled_check_reaps_descendants(settings, repos, artifacts, wor
     from tests.fixtures.agents import root_sink
     root = builders.new_root(repos)
     version, _ = prepare_source(workspace, repos, root_task_id=root.task_id, files={"helpers.py": "x = 1\n"})
-    started, escaped = tmp_path / "started", tmp_path / "escaped"
-    child = f"import time; from pathlib import Path; time.sleep(1); Path({str(escaped)!r}).write_text('alive')"
-    source = f"import subprocess, sys, time\nfrom pathlib import Path\ndef test_wait():\n    subprocess.Popen([sys.executable, '-c', {child!r}])\n    Path({str(started)!r}).write_text('yes')\n    time.sleep(10)\n"
+    # Keep the run directory until after the grandchild's write window so a
+    # survivor inside /work is still observable. Production still deletes it.
+    kept: list[Path] = []
+    monkeypatch.setattr(
+        "app.services.tools.checks.cleanup_execution_dir",
+        lambda path: kept.append(Path(path)),
+    )
+    child = "import time; from pathlib import Path; time.sleep(1); Path('/work/escaped').write_text('alive')"
+    source = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "def test_wait():\n"
+        f"    subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        "    Path('/work/started').write_text('yes')\n"
+        "    time.sleep(10)\n"
+    )
     ref = artifacts.save_text(root_task_id=root.task_id, artifact_type=ArtifactType.TEST_ARTIFACT, text=source).artifact_id
     ctx = ToolContext(root_task_id=root.task_id, actor_id="verifier", sink=root_sink(repos, root.task_id), source_version=version, workspace=workspace, artifacts=artifacts, repos=repos)
     check = CheckSpec(check_id="cancel", goal_ref="cancel", scope=["helpers.py"], method="behavior_test", pass_condition="executes")
+    before = set(Path(tempfile.gettempdir()).glob("crw-pytest-*/started"))
     worker = asyncio.create_task(run_checks(ctx, RunChecksArgs(checks=[check], contract_version="contract-1", generated_tests={"cancel": [ref]})))
-    for _ in range(100):
-        if started.exists():
+    started = []
+    for _ in range(200):
+        started = [p for p in Path(tempfile.gettempdir()).glob("crw-pytest-*/started") if p not in before]
+        if started:
             break
-        await asyncio.sleep(.02)
-    assert started.exists()
+        await asyncio.sleep(0.05)
+    assert started
     worker.cancel()
     with pytest.raises(asyncio.CancelledError):
         await worker
-    await asyncio.sleep(1.1)
-    assert not escaped.exists()
+    await asyncio.sleep(1.2)
+    try:
+        assert kept
+        assert not (kept[0] / "escaped").exists()
+    finally:
+        for path in kept:
+            shutil.rmtree(path, ignore_errors=True)
     assert not list((settings.evidence_dir / root.task_id / "runs").glob("run-*"))
 
 

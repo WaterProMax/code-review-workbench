@@ -14,6 +14,7 @@ from app.settings import (
     CAP_MAX_FIX_RETRIES,
     CAP_MAX_GENERATE_RETRIES,
     CAP_MAX_GRAPH_STEPS,
+    CAP_MAX_PATCH_INVALID,
     CAP_MAX_MODEL_RETRIES,
     CAP_MAX_PARENT_CORRECTIONS,
     CAP_MAX_REPAIR_ROUNDS,
@@ -37,6 +38,7 @@ class BudgetConfig(BaseModel):
     max_fix_retries: int = Field(default=2, ge=0, le=CAP_MAX_FIX_RETRIES)
     max_evidence_retries: int = Field(default=2, ge=0, le=CAP_MAX_EVIDENCE_RETRIES)
     max_generate_retries: int = Field(default=2, ge=0, le=CAP_MAX_GENERATE_RETRIES)
+    max_patch_invalid: int = Field(default=2, ge=0, le=CAP_MAX_PATCH_INVALID)
     max_parent_corrections: int = Field(default=2, ge=0, le=CAP_MAX_PARENT_CORRECTIONS)
     max_model_retries: int = Field(default=2, ge=0, le=CAP_MAX_MODEL_RETRIES)
     max_tool_steps: int = Field(default=12, ge=1, le=CAP_MAX_TOOL_STEPS)

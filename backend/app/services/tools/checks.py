@@ -16,8 +16,11 @@ Supported methods (ImplementationPlan §5.3, §7.5):
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
+import os
+import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -38,7 +41,7 @@ from app.services.tools.test_executor import (
     set_up_execution_dir,
 )
 
-EXECUTOR_VERSION = "1.1"
+EXECUTOR_VERSION = "1.2"
 GENERATED_TESTS_DIR = "_hw2_tests"
 
 
@@ -85,6 +88,16 @@ async def run_checks(ctx: ToolContext, args: RunChecksArgs) -> ToolResult:
                 fault = _fault_for(check, outcome)
                 if fault:
                     faults.append(fault)
+            elif "REGRESSION_SUITE_MISSING" in (result.reason or ""):
+                faults.append(
+                    {
+                        "check_id": check.check_id,
+                        "code": "REGRESSION_SUITE_MISSING",
+                        "category": "tool_error",
+                        "message": result.reason,
+                        "recoverable": False,
+                    }
+                )
         else:  # model_review
             result = CheckResult(
                 check_id=check.check_id,
@@ -278,10 +291,23 @@ def _content_key(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _load_regression(ctx: ToolContext, check_id: str) -> dict[str, str]:
-    path = _regression_path(ctx, check_id)
-    if not path.exists():
-        return {}
+class RegressionSuiteMissing(RuntimeError):
+    """The frozen regression file was removed after it had been committed."""
+
+    def __init__(self, path: str) -> None:
+        self.code = "REGRESSION_SUITE_MISSING"
+        super().__init__(f"REGRESSION_SUITE_MISSING: 已冻结的回归集丢失（{path}），拒绝重新冻结")
+
+
+def _lock_path(path: Path) -> Path:
+    return path.with_name(path.name + ".lock")
+
+
+def _stamp_path(path: Path) -> Path:
+    return path.with_name(path.name + ".frozen")
+
+
+def _parse_regression(path: Path) -> dict[str, str]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -295,9 +321,22 @@ def _load_regression(ctx: ToolContext, check_id: str) -> dict[str, str]:
     return loaded
 
 
-def _save_regression(ctx: ToolContext, check_id: str, tests: dict[str, str]) -> None:
-    path = _regression_path(ctx, check_id)
+def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _write_regression_file(path: Path, check_id: str, tests: dict[str, str]) -> None:
     payload = {
         "check_id": check_id,
         "tests": [
@@ -305,7 +344,52 @@ def _save_regression(ctx: ToolContext, check_id: str, tests: dict[str, str]) -> 
             for relpath, content in sorted(tests.items())
         ],
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2))
+    _atomic_write(_stamp_path(path), "frozen\n")
+
+
+def load_regression_file(path: Path) -> dict[str, str]:
+    """Read a frozen suite. A deleted file that was frozen is an error."""
+    stamp = _stamp_path(path)
+    if not path.exists() and not stamp.exists():
+        return {}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(_lock_path(path), "a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if stamp.exists() and not path.exists():
+                raise RegressionSuiteMissing(str(path))
+            if not path.exists():
+                return {}
+            return _parse_regression(path)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def update_regression_file(path: Path, check_id: str, additions: dict[str, str]) -> dict[str, str]:
+    """Merge ``additions`` under an exclusive lock and publish via ``os.replace``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(_lock_path(path), "a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            stamp = _stamp_path(path)
+            if stamp.exists() and not path.exists():
+                raise RegressionSuiteMissing(str(path))
+            current = _parse_regression(path) if path.exists() else {}
+            current.update(additions)
+            _write_regression_file(path, check_id, current)
+            return current
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _load_regression(ctx: ToolContext, check_id: str) -> dict[str, str]:
+    return load_regression_file(_regression_path(ctx, check_id))
+
+
+def _save_regression(ctx: ToolContext, check_id: str, tests: dict[str, str]) -> None:
+    path = _regression_path(ctx, check_id)
+    update_regression_file(path, check_id, tests)
 
 
 def _merge_tests(generated: dict[str, str], frozen: dict[str, str]) -> dict[str, str]:
@@ -321,29 +405,33 @@ def _merge_tests(generated: dict[str, str], frozen: dict[str, str]) -> dict[str,
     return merged
 
 
-async def _freeze_reproductions(
+def _failed_relpaths(outcome: PytestOutcome) -> set[str]:
+    paths: set[str] = set()
+    for node in outcome.failed_node_ids:
+        paths.add(node.split("::", 1)[0].replace("\\", "/"))
+    return paths
+
+
+def _persist_new_failures(
     ctx: ToolContext,
     check: CheckSpec,
-    generated: dict[str, str],
+    fresh: dict[str, str],
     frozen: dict[str, str],
-    baseline_version: str,
+    outcome: PytestOutcome,
 ) -> dict[str, str]:
-    """Keep tests that fail on the original upload. Later rounds may only add."""
+    """Freeze new tests that failed in the single baseline suite run."""
+    failed = _failed_relpaths(outcome)
     known = {_content_key(content) for content in frozen.values()}
-    updated = dict(frozen)
-    changed = False
-    for relpath, content in generated.items():
+    additions: dict[str, str] = {}
+    for relpath, content in fresh.items():
         key = _content_key(content)
-        if key in known:
+        if key in known or relpath.replace("\\", "/") not in failed:
             continue
-        outcome = await _run_baseline(ctx, check, {relpath: content}, baseline_version)
-        if outcome is not None and _classify(outcome)[0] is CheckStatus.FAILED:
-            updated[f"{GENERATED_TESTS_DIR}/{check.check_id}/frozen-{key[:16]}.py"] = content
-            known.add(key)
-            changed = True
-    if changed:
-        _save_regression(ctx, check.check_id, updated)
-    return updated
+        additions[f"{GENERATED_TESTS_DIR}/{check.check_id}/frozen-{key[:16]}.py"] = content
+        known.add(key)
+    if not additions:
+        return frozen
+    return update_regression_file(_regression_path(ctx, check.check_id), check.check_id, additions)
 
 
 async def _run_behavior(
@@ -355,12 +443,23 @@ async def _run_behavior(
         content = ctx.artifacts.read_bytes(artifact_id).decode("utf-8")
         for suffix, source in _expand_generated(content, check.check_id):
             generated[f"{GENERATED_TESTS_DIR}/{check.check_id}/{artifact_id}{suffix}.py"] = source
-    frozen = _load_regression(ctx, check.check_id)
-    if args.baseline_version and generated:
-        frozen = await _freeze_reproductions(
-            ctx, check, generated, frozen, args.baseline_version
-        )
-    generated = _merge_tests(generated, frozen)
+    try:
+        frozen = _load_regression(ctx, check.check_id)
+    except RegressionSuiteMissing as exc:
+        return _regression_missing_result(ctx, args, check, exc)
+    fresh = dict(generated)
+    # One baseline suite covers both "which new tests reproduce the bug" and the
+    # later proof note. Per-file baseline runs would be N extra pytest processes.
+    base_outcome: PytestOutcome | None = None
+    if args.baseline_version and (fresh or frozen):
+        suite = _merge_tests(fresh, frozen)
+        try:
+            base_outcome = await _run_baseline(ctx, check, suite, args.baseline_version)
+            if base_outcome is not None and fresh:
+                frozen = _persist_new_failures(ctx, check, fresh, frozen, base_outcome)
+        except RegressionSuiteMissing as exc:
+            return _regression_missing_result(ctx, args, check, exc)
+    generated = _merge_tests(fresh, frozen)
 
     existing: dict[str, str] = {}
     if args.include_existing_tests:
@@ -434,14 +533,12 @@ async def _run_behavior(
 
     # Defect proof uses the original upload, not the previous patch. A rollback
     # that redefines the bug as the expected behavior then fails this gate.
+    # ``base_outcome`` is the single baseline suite run performed above.
     baseline_note = ""
-    base_outcome = None
-    if args.baseline_version and generated:
-        base_outcome = await _run_baseline(ctx, check, generated, args.baseline_version)
-        if base_outcome is not None:
-            baseline_note = (
-                f"；基础版本（原始上传 {args.baseline_version}）上同一测试：{base_outcome.summary_line}"
-            )
+    if base_outcome is not None:
+        baseline_note = (
+            f"；基础版本（原始上传 {args.baseline_version}）上同一测试：{base_outcome.summary_line}"
+        )
     if (
         args.previous_version
         and args.previous_version != args.baseline_version
@@ -538,6 +635,25 @@ async def _run_baseline(
     return outcome
 
 
+def _regression_missing_result(
+    ctx: ToolContext, args: RunChecksArgs, check: CheckSpec, exc: RegressionSuiteMissing
+) -> tuple[CheckResult, list[str], PytestOutcome | None]:
+    return (
+        CheckResult(
+            check_id=check.check_id,
+            contract_version=args.contract_version,
+            source_version=ctx.source_version,
+            producer_attempt_id=ctx.attempt_id or "unknown",
+            method=CheckMethod.BEHAVIOR_TEST,
+            status=CheckStatus.NOT_RUN,
+            executed=False,
+            reason=str(exc),
+        ),
+        [],
+        None,
+    )
+
+
 def _classify(outcome: PytestOutcome) -> tuple[CheckStatus, str]:
     if outcome.timed_out:
         return CheckStatus.NOT_RUN, f"测试执行超时：{outcome.summary_line}"
@@ -545,6 +661,11 @@ def _classify(outcome: PytestOutcome) -> tuple[CheckStatus, str]:
         return CheckStatus.NOT_RUN, f"缺少依赖 {outcome.missing_dependency}，无法运行测试"
     if outcome.collection_error:
         return CheckStatus.NOT_RUN, f"测试收集失败：{outcome.summary_line}"
+    # Junit is the verdict. A forged "N passed" line plus exit 0 is not a pass.
+    if not outcome.integrity_ok:
+        if outcome.failed > 0:
+            return CheckStatus.FAILED, f"junit 报告含失败用例：{outcome.summary_line}"
+        return CheckStatus.INCONCLUSIVE, "junit 报告缺失或与收集结果不一致，不能作为通过证据"
     if outcome.collected == 0:
         return CheckStatus.NOT_RUN, "零收集测试，不能作为通过证据"
     if outcome.skipped == outcome.collected:

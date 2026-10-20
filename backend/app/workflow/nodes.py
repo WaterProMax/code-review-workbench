@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
-from langgraph.graph import END
-from langgraph.types import Command
+from langgraph.types import Command, Overwrite, Send, interrupt
 
 from app.agents.base import AgentContext
 from app.agents.parent import ParentAgent, ParentPlan
-from app.providers.base import LLMClient
+from app.providers.base import LLMClient, LLMError
 from app.registry.agents import AgentRegistry
 from app.registry.tools import ToolRegistry
 from app.schemas.actions import (
@@ -30,8 +29,10 @@ from app.schemas.artifacts import PatchApplication
 from app.schemas.common import ErrorInfo
 from app.schemas.enums import (
     ArtifactType,
+    AttemptStatus,
     ErrorCategory,
     EventType,
+    RetryReason,
     RootStatus,
     WorkflowNodeType,
 )
@@ -57,6 +58,36 @@ TERMINAL_ROOT_STATUSES = {
 }
 
 
+class WorkflowNodeError(RuntimeError):
+    """A graph node hit an invariant it cannot record as a normal rejection."""
+
+
+class AttemptPayload(TypedDict):
+    """Input schema for one ``Send`` branch. Kept off the parent channels."""
+
+    envelope: dict
+
+
+def _resume_overrides_from(decision: dict) -> dict[str, Any]:
+    """Map a human resume payload onto channels. Rejections start a new segment."""
+    if not isinstance(decision, dict):
+        raise WorkflowNodeError("恢复决定必须是对象")
+    update = {
+        key: value
+        for key, value in decision.items()
+        if key not in {"action", "grants"}
+    }
+    update["action_rejections"] = Overwrite([])
+    update["branch_faults"] = Overwrite([])
+    update["rejection_count"] = 0
+    update.setdefault("status", RootStatus.RUNNING.value)
+    update.setdefault("next_action", None)
+    update.setdefault("fatal_error", None)
+    update.setdefault("waiting_reason", None)
+    update.setdefault("required_action", None)
+    return update
+
+
 def action_goto(next_action: dict | None) -> str:
     """Successor of an already validated parent action.
 
@@ -68,7 +99,7 @@ def action_goto(next_action: dict | None) -> str:
         "dispatch_task": "dispatch",
         "dispatch_batch": "dispatch",
         "apply_patch": "apply_patch",
-        "wait_for_recovery": "wait",
+        "wait_for_recovery": "enter_wait",
         "finish": "check_finish",
     }.get(str(next_action.get("action") or ""), "budget")
 
@@ -94,6 +125,7 @@ class WorkflowRuntime:
         parent: ParentAgent,
     ) -> None:
         self.fencing_token = 0
+        self.cancellation = asyncio.Event()
         self.settings = settings
         self.repos = repos
         self.workflow = workflow
@@ -127,7 +159,7 @@ class WorkflowRuntime:
         allowed = constraints.allowed_paths or self.workspace.list_files(
             task.root_task_id, task.source_version
         )
-        return AgentContext(
+        context = AgentContext(
             llm=self.llm,
             tools=self.tools,
             workspace=self.workspace,
@@ -148,6 +180,8 @@ class WorkflowRuntime:
             allowed_paths=allowed,
             read_only=True,
         )
+        context.cancellation = self.cancellation
+        return context
 
     def _contract(self, state: dict) -> AcceptanceContract:
         return AcceptanceContract.model_validate(state["contract"])
@@ -200,23 +234,25 @@ class WorkflowRuntime:
         }
 
     # ---- routing (conditional edges the diagram must show) ----------------
-    def route_after_initialize(self, state: dict) -> Literal["wait", "plan", "budget"]:
+    def route_after_initialize(self, state: dict) -> Literal["enter_wait", "plan", "budget"]:
         if state.get("fatal_error"):
-            return "wait"
+            return "enter_wait"
         if state.get("contract"):
             return "budget"
         return "plan"
 
-    def route_after_validate_plan(self, state: dict) -> Literal["replan", "commit_plan", "wait"]:
+    def route_after_validate_plan(
+        self, state: dict
+    ) -> Literal["replan", "commit_plan", "enter_wait"]:
         if not state.get("plan_problems"):
             return "commit_plan"
         if int(state.get("plan_corrections") or 0) < self.settings.max_parent_corrections:
             return "replan"
-        return "wait"
+        return "enter_wait"
 
-    def route_after_budget(self, state: dict) -> Literal["wait", "parent_decide"]:
+    def route_after_budget(self, state: dict) -> Literal["enter_wait", "parent_decide"]:
         steps, limit = self._next_graph_step(state)
-        return "wait" if steps > limit else "parent_decide"
+        return "enter_wait" if steps > limit else "parent_decide"
 
     def _next_graph_step(self, state: dict) -> tuple[int, int]:
         """The business step the next parent decision would consume, and its grant.
@@ -353,7 +389,7 @@ class WorkflowRuntime:
         }
 
     async def n_budget(self, state: dict) -> dict:
-        """Business step-budget gate. The conditional edge is budget → wait."""
+        """Business step-budget gate. The conditional edge is budget → enter_wait."""
         steps, limit = self._next_graph_step(state)
         if steps <= limit:
             return {}
@@ -434,7 +470,8 @@ class WorkflowRuntime:
         return {task.task_id: node.id for node, task in zip(nodes, children)}
 
     def _current_rejections(self, state: dict) -> list[dict]:
-        return list(state.get("action_rejections") or [])[int(state.get("rejection_history_start") or 0):]
+        # Resume clears the channel with Overwrite. An empty list is this segment.
+        return list(state.get("action_rejections") or [])
 
     def _decision_context(self, state: dict) -> dict[str, Any]:
         root_task_id = state["root_task_id"]
@@ -536,7 +573,7 @@ class WorkflowRuntime:
     # ---- validate action ---------------------------------------------------
     async def n_validate_action(
         self, state: dict
-    ) -> Command[Literal["dispatch", "apply_patch", "check_finish", "wait", "budget"]]:
+    ) -> Command[Literal["dispatch", "apply_patch", "check_finish", "enter_wait", "budget"]]:
         raw = state.get("next_action")
         if not raw:
             return Command(goto="budget")
@@ -570,7 +607,9 @@ class WorkflowRuntime:
         return Command(update=update, goto=action_goto(raw))
 
     # ---- dispatch ----------------------------------------------------------
-    async def n_dispatch(self, state: dict) -> Command[Literal["collect_results", "budget"]]:
+    async def n_dispatch(
+        self, state: dict
+    ) -> Command[Literal["run_attempt", "budget", "collect_results"]]:
         root_task_id = state["root_task_id"]
         action = parse_parent_action(state["next_action"])
         try:
@@ -602,7 +641,6 @@ class WorkflowRuntime:
                 goto="budget",
             )
 
-        from app.schemas.enums import AttemptStatus, RetryReason
         interrupted = [i for i, a in enumerate(plan.attempts) if a.status is AttemptStatus.INTERRUPTED]
         if interrupted:
             retry_items = [plan.items[i] for i in interrupted]
@@ -625,82 +663,39 @@ class WorkflowRuntime:
             for i, retry in zip(interrupted, retries):
                 plan.attempts[i] = retry
             plan.batch_id = retry_batch
-        reports: dict[str, dict] = {}
-        faults: list[dict] = []
         envelopes = [
             self.controller.build_envelope(attempt, task, item, self.workflow)
             for attempt, task, item in zip(plan.attempts, plan.tasks, plan.items)
         ]
-
-        async def run_one(envelope: TaskEnvelope) -> tuple[TaskEnvelope, Any]:
-            timeout = envelope.constraints.timeout_seconds
-            try:
-                existing = self.repos.results.get_by_attempt(envelope.attempt_id)
-                if existing is not None:
-                    return envelope, existing
-                result = await asyncio.wait_for(self.adapter.execute(envelope), timeout=timeout)
-                self.task_service.receive_result(envelope, result)
-                return envelope, result
-            except asyncio.TimeoutError:
-                self._controller_terminal(
-                    envelope,
-                    "ATTEMPT_TIMEOUT",
-                    f"尝试在 {timeout}s 内未结束，控制层撤销该尝试并记录故障终态",
-                    category=ErrorCategory.ATTEMPT_TIMEOUT,
-                )
-                return envelope, None
-            except ResultIdentityError as exc:
-                self._controller_terminal(
-                    envelope, "RESULT_IDENTITY_MISMATCH", "; ".join(exc.problems)
-                )
-                return envelope, None
-            except Exception as exc:  # noqa: BLE001 - normalize an unexpected failure
-                self._controller_terminal(
-                    envelope,
-                    "ATTEMPT_EXECUTION_ERROR",
-                    f"{type(exc).__name__}: {exc}"[:400],
-                    category=ErrorCategory.UNKNOWN,
-                )
-                return envelope, None
-
-        # A batch runs its attempts concurrently: they read the same frozen
-        # snapshot and must not share a context or a database connection.
-        outcomes = await asyncio.gather(*(run_one(e) for e in envelopes))
-        for envelope, result in outcomes:
-            if result is None:
-                faults.append(
-                    {
-                        "attempt_id": envelope.attempt_id,
-                        "task_id": envelope.task_id,
-                        "code": "CONTROLLER_TERMINAL",
-                        "recoverable": True,
-                    }
-                )
-                continue
-            reports[envelope.attempt_id] = result.model_dump(mode="json")
-
+        update = {
+            "attempts": {a.attempt_id: a.model_dump(mode="json") for a in plan.attempts},
+            "pending_attempt_ids": [envelope.attempt_id for envelope in envelopes],
+            "current_batch_id": plan.batch_id,
+            "dispatch_ok": True,
+            "branch_faults": Overwrite([]),
+            "controller_faults": [],
+            "dispatch_history": [
+                {
+                    "batch_id": plan.batch_id,
+                    "attempt_ids": [a.attempt_id for a in plan.attempts],
+                    "task_kinds": [t.task_kind for t in plan.tasks],
+                    "action": state["next_action"]["action"],
+                }
+            ],
+            "next_action": None,
+            "last_application": None,
+            "last_application_error": None,
+            "task_tree": self._task_tree(root_task_id),
+        }
+        # An empty Send list does not advance the superstep. Collect instead.
+        if not envelopes:
+            return Command(update=update, goto="collect_results")
         return Command(
-            update={
-                "results": reports,
-                "attempts": {a.attempt_id: a.model_dump(mode="json") for a in plan.attempts},
-                "pending_attempt_ids": [a.attempt_id for a in plan.attempts],
-                "current_batch_id": plan.batch_id,
-                "dispatch_ok": True,
-                "controller_faults": faults,
-                "dispatch_history": [
-                    {
-                        "batch_id": plan.batch_id,
-                        "attempt_ids": [a.attempt_id for a in plan.attempts],
-                        "task_kinds": [t.task_kind for t in plan.tasks],
-                        "action": state["next_action"]["action"],
-                    }
-                ],
-                "next_action": None,
-                "last_application": None,
-                "last_application_error": None,
-                "task_tree": self._task_tree(root_task_id),
-            },
-            goto="collect_results",
+            update=update,
+            goto=[
+                Send("run_attempt", {"envelope": envelope.model_dump(mode="json")})
+                for envelope in envelopes
+            ],
         )
 
     def _controller_terminal(
@@ -732,13 +727,121 @@ class WorkflowRuntime:
             error_ref=error_artifact.artifact_id,
         )
 
+    def _branch_fault(self, envelope: TaskEnvelope, *, recoverable: bool = True) -> dict:
+        return {
+            "attempt_id": envelope.attempt_id,
+            "task_id": envelope.task_id,
+            "code": "CONTROLLER_TERMINAL",
+            "recoverable": recoverable,
+        }
+
+    def _with_live_fence(self, envelope: TaskEnvelope) -> TaskEnvelope:
+        """Rebind a checkpointed envelope to the lease this process holds.
+
+        ``Send`` freezes the token from dispatch. After a crash the new owner
+        holds a higher token. A stale executor never receives that token, so
+        updating the attempt row here does not let a fenced caller publish.
+        """
+        token = int(self.fencing_token or 0)
+        if token <= 0 or envelope.fencing_token == token:
+            return envelope
+        control = self.repos.controls.get(envelope.root_task_id)
+        if control is None or int(control.fencing_token) != token:
+            return envelope
+        attempt = self.repos.attempts.get(envelope.attempt_id)
+        if attempt is not None and int(attempt.fencing_token) != token:
+            with self.repos.db.transaction() as conn:
+                conn.execute(
+                    "UPDATE attempts SET fencing_token = ? WHERE attempt_id = ?",
+                    (token, envelope.attempt_id),
+                )
+        return envelope.model_copy(update={"fencing_token": token})
+
+    async def n_run_attempt(self, payload: AttemptPayload) -> dict:
+        """Run one attempt from a ``Send`` payload. Sibling branches do not share this call."""
+        raw = payload.get("envelope") if isinstance(payload, dict) else None
+        try:
+            envelope = TaskEnvelope.model_validate(raw)
+        except Exception as exc:  # noqa: BLE001 - a bad payload is one branch's fault
+            return {
+                "branch_faults": [
+                    {
+                        "attempt_id": None,
+                        "code": "CONTROLLER_TERMINAL",
+                        "recoverable": False,
+                        "message": f"派发封套无效：{exc}"[:400],
+                    }
+                ]
+            }
+        existing = self.repos.results.get_by_attempt(envelope.attempt_id)
+        if existing is not None:
+            return {"results": {envelope.attempt_id: existing.model_dump(mode="json")}}
+        envelope = self._with_live_fence(envelope)
+        # An interrupted attempt already has finished_at. Re-running it sets a
+        # new started_at; leaving the old finish time makes the row invalid.
+        prior = self.repos.attempts.get(envelope.attempt_id)
+        if prior is not None and prior.finished_at is not None:
+            with self.repos.db.transaction() as conn:
+                conn.execute(
+                    "UPDATE attempts SET finished_at = NULL WHERE attempt_id = ?",
+                    (envelope.attempt_id,),
+                )
+        timeout = envelope.constraints.timeout_seconds
+        try:
+            result = await asyncio.wait_for(self.adapter.execute(envelope), timeout=timeout)
+            self.task_service.receive_result(envelope, result)
+            return {"results": {envelope.attempt_id: result.model_dump(mode="json")}}
+        except TimeoutError:
+            self._controller_terminal(
+                envelope,
+                "ATTEMPT_TIMEOUT",
+                f"尝试在 {timeout}s 内未结束，控制层撤销该尝试并记录故障终态",
+                category=ErrorCategory.ATTEMPT_TIMEOUT,
+            )
+            return {"branch_faults": [self._branch_fault(envelope)]}
+        except ResultIdentityError as exc:
+            self._controller_terminal(
+                envelope, "RESULT_IDENTITY_MISMATCH", "; ".join(exc.problems)
+            )
+            return {"branch_faults": [self._branch_fault(envelope)]}
+        except LLMError as exc:
+            if exc.recoverable:
+                raise
+            self._controller_terminal(
+                envelope,
+                exc.code,
+                exc.message[:400],
+                category=exc.category,
+            )
+            return {"branch_faults": [self._branch_fault(envelope, recoverable=False)]}
+        except Exception as exc:  # noqa: BLE001 - one branch must not kill the batch
+            try:
+                self._controller_terminal(
+                    envelope,
+                    "ATTEMPT_EXECUTION_ERROR",
+                    f"{type(exc).__name__}: {exc}"[:400],
+                    category=ErrorCategory.UNKNOWN,
+                )
+            except Exception:
+                # The fault channel still has to move; a second ledger error is not fatal.
+                pass
+            return {"branch_faults": [self._branch_fault(envelope)]}
+
     # ---- collect results ---------------------------------------------------
     async def n_collect_results(self, state: dict) -> dict:
         root_task_id = state["root_task_id"]
         terminals: dict[str, dict] = {}
         processed: list[str] = []
+        fault_ids = {
+            str(item.get("attempt_id"))
+            for item in (state.get("branch_faults") or [])
+            if isinstance(item, dict) and item.get("attempt_id")
+        }
+        results = state.get("results") or {}
         for attempt_id in list(state.get("pending_attempt_ids") or []):
-            raw = (state.get("results") or {}).get(attempt_id)
+            if attempt_id in fault_ids and attempt_id not in results:
+                continue
+            raw = results.get(attempt_id)
             if raw is None:
                 continue
             result = TaskResult.model_validate(raw)
@@ -805,6 +908,9 @@ class WorkflowRuntime:
         resolved_findings = self.detector.resolve_required_findings(
             root_task_id=root_task_id, source_version=state["source_version"]
         )
+        branch_faults = list(state.get("branch_faults") or [])
+        legacy_faults = list(state.get("controller_faults") or [])
+        faults = branch_faults if branch_faults else legacy_faults
         detection = self.detector.detect(
             root_task_id=root_task_id,
             contract=contract,
@@ -813,7 +919,7 @@ class WorkflowRuntime:
             reports=reports,
             application=application,
             application_error=application_error,
-            controller_faults=list(state.get("controller_faults") or []),
+            controller_faults=faults,
             previous_signature=state.get("failure_signature"),
             previous_source_version=state.get("detected_source_version"),
             previous_patch_fingerprint=state.get("patch_fingerprint"),
@@ -845,6 +951,7 @@ class WorkflowRuntime:
                 detection.progress.patch_fingerprint or state.get("patch_fingerprint")
             ),
             "detected_source_version": state["source_version"],
+            "branch_faults": Overwrite([]),
             "controller_faults": [],
             "feedback": [detection.suggestion or ""],
             "task_tree": self._task_tree(root_task_id),
@@ -926,8 +1033,8 @@ class WorkflowRuntime:
             "task_tree": self._task_tree(root_task_id),
         }
 
-    # ---- wait --------------------------------------------------------------
-    async def n_wait(self, state: dict) -> dict:
+    # ---- wait: side effects once, then a pure interrupt --------------------
+    async def n_enter_wait(self, state: dict) -> dict:
         root_task_id = state["root_task_id"]
         reason = state.get("waiting_reason") or "存在需要人工处理的问题"
         required = state.get("required_action") or "处理后请求恢复任务"
@@ -970,6 +1077,145 @@ class WorkflowRuntime:
             "status": RootStatus.WAITING_RECOVERY.value,
             "waiting_reason": reason,
             "required_action": required,
+            "next_action": None,
+            "task_tree": self._task_tree(root_task_id),
+        }
+
+    async def n_await_human(
+        self, state: dict
+    ) -> Command[Literal["budget", "finalize_terminated"]]:
+        """Park until a human resumes. No writes: this node replays from the top."""
+        decision = interrupt(
+            {
+                "reason": state.get("waiting_reason"),
+                "required_action": state.get("required_action"),
+                "budgets": self.locks.budget_state(
+                    state["root_task_id"], self.workflow.budgets
+                ),
+            }
+        )
+        if not isinstance(decision, dict):
+            raise WorkflowNodeError("恢复决定必须是对象")
+        if decision.get("action") == "terminate":
+            return Command(
+                update={
+                    "waiting_reason": decision.get("reason") or state.get("waiting_reason")
+                },
+                goto="finalize_terminated",
+            )
+        return Command(update=_resume_overrides_from(decision), goto="budget")
+
+    def _termination_verdict(self, state: dict) -> bool | None:
+        raw = state.get("contract") or {}
+        if not raw or not state.get("source_version"):
+            return None
+        contract = AcceptanceContract.model_validate(raw)
+        required_ids = self.detector.required_check_ids(
+            contract, patched=bool(state.get("patched"))
+        )
+        _can_finish, passed, _problems, _unresolved = self.task_service.detect_completion(
+            root_task_id=state["root_task_id"],
+            source_version=state["source_version"],
+            required_check_ids=required_ids,
+        )
+        return passed
+
+    async def n_finalize_terminated(self, state: dict) -> dict:
+        """Project a terminate decision. Skip the ledger when recovery already wrote it."""
+        root_task_id = state["root_task_id"]
+        reason = state.get("waiting_reason") or "用户终止任务"
+        root = self.repos.tasks.get(root_task_id)
+        existing = self.repos.reports.latest(root_task_id, "final")
+        if (
+            existing is not None
+            and root is not None
+            and root.status in TERMINAL_ROOT_STATUSES
+        ):
+            report = self.artifacts.read_json(existing["artifact_id"])
+            return {
+                "status": root.status,
+                "passed": root.passed,
+                "report_ref": existing["artifact_id"],
+                "final_report": report if isinstance(report, dict) else None,
+                "waiting_reason": None,
+                "required_action": None,
+                "next_action": None,
+                "task_tree": self._task_tree(root_task_id),
+            }
+        passed = self._termination_verdict(state)
+        final_status = (
+            RootStatus.PARTIAL.value if passed is None else RootStatus.COMPLETED.value
+        )
+        skipped = self.controller.finalize_skips(root_task_id=root_task_id, passed=passed)
+        contract = (
+            AcceptanceContract.model_validate(state["contract"])
+            if state.get("contract")
+            else None
+        )
+        source_version = state.get("source_version")
+        latest = (
+            self.detector.current_checks(root_task_id, source_version)
+            if source_version
+            else {}
+        )
+        if contract is None:
+            not_run = ["检查合同尚未建立"]
+        else:
+            not_run = [
+                check.check_id
+                for check in contract.checks
+                if check.check_id not in latest
+                or latest[check.check_id].status.value in {"not_run", "inconclusive"}
+            ]
+        unresolved = [
+            finding.finding_id
+            for finding in self.detector.open_required_findings(root_task_id)
+        ]
+        report, report_ref = self.controller.build_report(
+            root_task_id=root_task_id,
+            workflow=self.workflow,
+            contract=contract,
+            source_version=source_version,
+            status=final_status,
+            passed=passed,
+            goal=state.get("goal") or (root.goal if root else ""),
+            conclusion_scope=f"用户终止任务：{reason}；结论仅依据终止前已有证据",
+            unresolved=unresolved,
+            not_run=not_run,
+            skipped=skipped,
+            execution_summary={
+                "terminated": True,
+                "termination_reason": reason,
+                "attempts": len(self.repos.attempts.list_by_root(root_task_id)),
+            },
+        )
+        self.repos.tasks.update(
+            root_task_id,
+            status=final_status,
+            passed=passed,
+            passed_set=True,
+            bump_revision=True,
+        )
+        self.repos.controls.update(root_task_id, required_action="")
+        self.sink(root_task_id).emit(
+            EventType.TASK_COMPLETED,
+            payload={
+                "terminated": True,
+                "reason": reason,
+                "final_status": final_status,
+                "passed": passed,
+                "report_ref": report_ref,
+            },
+            artifact_refs=[report_ref],
+        )
+        return {
+            "status": final_status,
+            "passed": passed,
+            "report_ref": report_ref,
+            "final_report": report.model_dump(mode="json"),
+            "skipped_tasks": {item["task_id"]: item["skip_reason"] for item in skipped},
+            "waiting_reason": None,
+            "required_action": None,
             "next_action": None,
             "task_tree": self._task_tree(root_task_id),
         }
@@ -1045,20 +1291,18 @@ class WorkflowRuntime:
 
     async def n_check_finish(
         self, state: dict
-    ) -> Command[Literal["finalize", "budget", "__end__"]]:
+    ) -> Command[Literal["finalize", "budget"]]:
         reject, sketch = self._assess_finish(state)
         if reject is not None:
             return Command(update=reject, goto="budget")
-        # finalize writes the report; END is the terminal edge the diagram shows.
-        # finalize itself has no other outgoing edge.
-        return Command(update={"finish_sketch": sketch}, goto=["finalize", END])
+        return Command(update={"finish_sketch": sketch}, goto="finalize")
 
     # ---- finalize (only outgoing edge is END) ------------------------------
     async def n_finalize(self, state: dict) -> dict:
         root_task_id = state["root_task_id"]
         sketch = state.get("finish_sketch")
         if not sketch:
-            raise RuntimeError("finalize 只能在完成条件已经成立时执行")
+            raise WorkflowNodeError("finalize 只能在完成条件已经成立时执行")
         passed = sketch["passed"]
         unresolved = sketch["unresolved"]
         unfixable_reason = sketch["unfixable_reason"]

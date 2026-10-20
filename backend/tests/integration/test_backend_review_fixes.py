@@ -110,12 +110,22 @@ def test_cross_task_key_reuse_is_rejected_without_side_effects(repos, harness, l
         repos.controls.ensure(root.task_id, "seg-1", 256)
     if operation == "resume":
         payload = ResumeRequest(expected_revision=0, additional_repair_rounds=1, reason="追加额度")
-        call = lambda root_id: harness.recovery.resume(
-            root_id, payload, owner="owner", operation_key="shared-key", budgets=harness.runtime.workflow.budgets,
-        )
+
+        def call(root_id: str) -> object:
+            return harness.recovery.resume(
+                root_id,
+                payload,
+                owner="owner",
+                operation_key="shared-key",
+                budgets=harness.runtime.workflow.budgets,
+            )
     else:
         payload = TerminateRequest(expected_revision=0, reason="结束")
-        call = lambda root_id: harness.recovery.terminate(root_id, payload, owner="owner", operation_key="shared-key")
+
+        def call(root_id: str) -> object:
+            return harness.recovery.terminate(
+                root_id, payload, owner="owner", operation_key="shared-key"
+            )
     call(a.task_id)
     before = locks.budget_state(b.task_id, harness.runtime.workflow.budgets)
     with pytest.raises(ConflictError):

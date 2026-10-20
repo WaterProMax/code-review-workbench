@@ -12,13 +12,18 @@ import asyncio
 import uuid
 from typing import Any
 
-from langgraph.types import Command
+from langgraph.types import Command, Overwrite
 
+from app.schemas.enums import EventType
 from app.storage.checkpoints import thread_id_for
 from app.workflow.builder import GRAPH_RECURSION_LIMIT
 from app.workflow.nodes import WorkflowRuntime, action_goto
 from app.workflow.recovery import RecoveryCoordinator, RunRight
 from app.workflow.state import WorkflowState, initial_state
+
+
+class RunCancelled(RuntimeError):
+    """The lease heartbeat failed and the in-flight drive was cancelled."""
 
 
 class WorkflowRunner:
@@ -35,6 +40,8 @@ class WorkflowRunner:
         self.recovery = recovery
         self.owner = owner or f"runner-{uuid.uuid4().hex[:8]}"
         self.heartbeat_interval = 20.0
+        self.cancel_event = asyncio.Event()
+        self._drive_task: asyncio.Task | None = None
 
     def config(self, root_task_id: str) -> dict[str, Any]:
         # recursion_limit bounds framework supersteps. The business step budget
@@ -87,23 +94,36 @@ class WorkflowRunner:
         snapshot = await self.graph.aget_state(config)
         values: dict[str, Any] = dict(snapshot.values or {})
 
-        reconciliation = self.recovery.reconcile(root_task_id, values.get("source_version"))
-
+        # Take the fence before reconcile writes the patch ledger.
         right = self.recovery.acquire_run_right(
             root_task_id, self.owner, ttl_seconds=ttl_seconds
         )
+        reconciliation = self.recovery.reconcile(root_task_id, values.get("source_version"))
         overrides = self._resume_overrides(reconciliation, right)
-        # Keep the audit history, but old denials do not constrain a new run
-        # segment after the user has changed its execution allowance.
-        overrides["rejection_history_start"] = len(values.get("action_rejections") or [])
+        # Audit rows stay in the event table. This segment starts with no denials.
+        overrides["action_rejections"] = Overwrite([])
+        overrides["branch_faults"] = Overwrite([])
         overrides["rejection_count"] = 0
 
         if values.get("contract"):
-            # Correct the checkpointed projection, then continue. detect's edge
-            # enters the step-budget gate, which continues to the parent decision.
-            # Only scalar channels are written so accumulated list/map channels
-            # are preserved rather than duplicated.
-            replay_dispatch = bool(values.get("next_action") and values["next_action"].get("action") in {"dispatch_task", "dispatch_batch"} and "dispatch" in snapshot.next)
+            next_nodes = tuple(getattr(snapshot, "next", ()) or ())
+            if _snapshot_interrupted(snapshot):
+                # The interrupt node applies the decision. Do not forge a detect step.
+                payload = _resume_command_payload(
+                    overrides, self._latest_resume_grants(root_task_id)
+                )
+                return await self._drive(right, Command(resume=payload), ttl_seconds)
+            if "run_attempt" in next_nodes:
+                # A finished Send branch is a pending checkpoint write. Continuing
+                # replays only the branch that did not finish.
+                return await self._drive(right, None, ttl_seconds)
+            # Old checkpoints stopped at END, or next still names ``wait`` /
+            # ``dispatch`` / another control node, and there is no interrupt.
+            replay_dispatch = bool(
+                values.get("next_action")
+                and values["next_action"].get("action") in {"dispatch_task", "dispatch_batch"}
+                and "dispatch" in next_nodes
+            )
             if replay_dispatch:
                 overrides["next_action"] = values["next_action"]
                 # Command routing is not replayed by a plain state write, so the
@@ -157,15 +177,29 @@ class WorkflowRunner:
             overrides["last_application_error"] = None
         return overrides
 
+    def _latest_resume_grants(self, root_task_id: str) -> Any:
+        events = self.runtime.repos.events.list_after(root_task_id, 0, limit=5000)
+        granted: Any = []
+        for event in events:
+            if event.event_type is EventType.TASK_RESUMED:
+                granted = event.payload.get("granted") or []
+        return granted
+
     # ---- drive -------------------------------------------------------------
     async def _drive(
-        self, right: RunRight, state: WorkflowState | None, ttl_seconds: float
+        self, right: RunRight, state: WorkflowState | Command | None, ttl_seconds: float
     ) -> WorkflowState:
         from app.services.execution_context import active_execution
         self.runtime.fencing_token = right.fencing_token
+        self.cancel_event.clear()
+        cancellation = getattr(self.runtime, "cancellation", None)
+        if cancellation is not None:
+            cancellation.clear()
         context_token = active_execution.set((right.root_task_id, right.fencing_token))
         config = self.config(right.root_task_id)
-        beat = asyncio.create_task(self._heartbeat_loop(right, ttl_seconds))
+        drive_task = asyncio.current_task()
+        self._drive_task = drive_task
+        beat = asyncio.create_task(self._heartbeat_loop(right, ttl_seconds, drive_task))
         try:
             kwargs: dict[str, Any] = {}
             if getattr(self.graph, "checkpointer", None) is not None:
@@ -176,6 +210,13 @@ class WorkflowRunner:
                 final = await self.graph.ainvoke(None, config, **kwargs)
             else:
                 final = await self.graph.ainvoke(state, config, **kwargs)
+        except asyncio.CancelledError:
+            if self.cancel_event.is_set():
+                if not self.recovery.holds_right(right):
+                    from app.services.execution_context import ExecutionFenced
+                    raise ExecutionFenced("执行权已转移，旧执行器停止")
+                raise RunCancelled("执行租约心跳失败，已停止当前运行")
+            raise
         except Exception as exc:
             # The outer service's error bookkeeping must never mutate a task
             # after this invocation has lost its execution right.
@@ -192,14 +233,38 @@ class WorkflowRunner:
             active_execution.reset(context_token)
             if self.recovery.holds_right(right):
                 self.recovery.release(right)
+            if self._drive_task is drive_task:
+                self._drive_task = None
         return final
 
-    async def _heartbeat_loop(self, right: RunRight, ttl_seconds: float) -> None:
+    async def _heartbeat_loop(
+        self, right: RunRight, ttl_seconds: float, drive_task: asyncio.Task | None
+    ) -> None:
         interval = min(self.heartbeat_interval, max(ttl_seconds / 3.0, 0.05))
         try:
             while True:
                 await asyncio.sleep(interval)
                 if not self.recovery.heartbeat(right, ttl_seconds=ttl_seconds):
+                    self.cancel_event.set()
+                    cancellation = getattr(self.runtime, "cancellation", None)
+                    if cancellation is not None:
+                        cancellation.set()
+                    if drive_task is not None and not drive_task.done():
+                        drive_task.cancel()
                     return
         except asyncio.CancelledError:
             raise
+
+
+def _snapshot_interrupted(snapshot: Any) -> bool:
+    tasks = getattr(snapshot, "tasks", None) or ()
+    return any(getattr(task, "interrupts", None) for task in tasks)
+
+
+def _resume_command_payload(overrides: dict[str, Any], grants: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {"action": "resume", "grants": grants}
+    for key, value in overrides.items():
+        if isinstance(value, Overwrite):
+            continue
+        payload[key] = value
+    return payload

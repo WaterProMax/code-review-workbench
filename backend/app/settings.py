@@ -34,6 +34,7 @@ CAP_MAX_REVIEW_RETRIES = 10
 CAP_MAX_FIX_RETRIES = 10
 CAP_MAX_EVIDENCE_RETRIES = 10
 CAP_MAX_GENERATE_RETRIES = 10
+CAP_MAX_PATCH_INVALID = 2
 CAP_MAX_PARENT_CORRECTIONS = 5
 CAP_MAX_MODEL_RETRIES = 5
 CAP_MAX_TOOL_STEPS = 64
@@ -44,8 +45,12 @@ CAP_MAX_GRAPH_STEPS = 2048
 
 
 class Settings(BaseSettings):
+    # Production injects HW2_* through the process environment (the start script).
+    # Local dev may still use a gitignored project-root .env, but the path is
+    # absolute so it does not depend on the working directory and does not walk
+    # out of backend/ via a relative ../.env.
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         env_prefix="HW2_",
@@ -55,8 +60,11 @@ class Settings(BaseSettings):
     model_provider: Literal["deepseek"] = "deepseek"
     model_base_url: str = "https://api.deepseek.com"
     model_name: str = "deepseek-chat"
-    model_api_key: str | None = None
+    model_api_key: str | None = Field(default=None, repr=False)
     model_temperature: float = 0.0
+
+    # Optional bearer token for /api/*. Empty means the API stays open.
+    api_token: str | None = Field(default=None, repr=False)
 
     # --- storage / server ---------------------------------------------------
     data_dir: Path = DEFAULT_DATA_DIR
@@ -79,6 +87,7 @@ class Settings(BaseSettings):
     max_fix_retries: int = Field(default=2, ge=0)
     max_evidence_retries: int = Field(default=2, ge=0)
     max_generate_retries: int = Field(default=2, ge=0)
+    max_patch_invalid: int = Field(default=2, ge=0)
     max_parent_corrections: int = Field(default=2, ge=0)
     max_model_retries: int = Field(default=2, ge=0)
 
@@ -92,12 +101,22 @@ class Settings(BaseSettings):
     # --- testing ------------------------------------------------------------
     # Only honored when an explicit scripted model is injected by tests.
     force_scripted_model: bool = False
+    # bwrap is the default. "none" runs only when HW2_ALLOW_UNSANDBOXED=1;
+    # assert_sandbox_config enforces that at pytest entry, not at import.
+    sandbox: Literal["bwrap", "docker", "none"] = "bwrap"
 
     @field_validator("data_dir", "config_dir", mode="before")
     @classmethod
     def _expand_data_dir(cls, value: object) -> object:
         if isinstance(value, str):
             return Path(value).expanduser()
+        return value
+
+    @field_validator("api_token", mode="before")
+    @classmethod
+    def _blank_token(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @model_validator(mode="after")
@@ -109,6 +128,7 @@ class Settings(BaseSettings):
             ("max_fix_retries", self.max_fix_retries, CAP_MAX_FIX_RETRIES),
             ("max_evidence_retries", self.max_evidence_retries, CAP_MAX_EVIDENCE_RETRIES),
             ("max_generate_retries", self.max_generate_retries, CAP_MAX_GENERATE_RETRIES),
+            ("max_patch_invalid", self.max_patch_invalid, CAP_MAX_PATCH_INVALID),
             ("max_parent_corrections", self.max_parent_corrections, CAP_MAX_PARENT_CORRECTIONS),
             ("max_model_retries", self.max_model_retries, CAP_MAX_MODEL_RETRIES),
             ("max_tool_steps", self.max_tool_steps, CAP_MAX_TOOL_STEPS),

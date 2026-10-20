@@ -6,6 +6,30 @@ interface Props {
   applications: PatchApplicationArtifact[];
 }
 
+function diffCountLabel(diffText: string): string {
+  let added = 0;
+  let removed = 0;
+  for (const line of diffText.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
+    else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
+  }
+  return `+${added} / -${removed}`;
+}
+
+function lineKind(line: string): "新增" | "删除" | "差异块" | "上下文" {
+  if (line.startsWith("+") && !line.startsWith("+++")) return "新增";
+  if (line.startsWith("-") && !line.startsWith("---")) return "删除";
+  if (line.startsWith("@@")) return "差异块";
+  return "上下文";
+}
+
+function lineClass(kind: ReturnType<typeof lineKind>): string {
+  if (kind === "新增") return "diff-add";
+  if (kind === "删除") return "diff-del";
+  if (kind === "差异块") return "diff-hunk";
+  return "diff-ctx";
+}
+
 export function DiffViewer({ patches, applications }: Props) {
   if (patches.length === 0 && applications.length === 0) {
     return <p className="muted">没有补丁：当前任务不需要修改代码，或修复尚未产出补丁。</p>;
@@ -58,26 +82,22 @@ export function DiffViewer({ patches, applications }: Props) {
             )}
             <span className="muted mono">基础版本 {patch.base_version}</span>
             {patch.rationale && <span className="muted">{patch.rationale}</span>}
+            {patch.diff_text && (
+              <span className="diff-counts" aria-label={diffCountLabel(patch.diff_text)}>
+                {diffCountLabel(patch.diff_text)}
+              </span>
+            )}
           </div>
           {patch.diff_text ? (
             <pre className="diff" aria-label={`补丁 ${patch.patch_id}`}>
-              {patch.diff_text.split("\n").map((line, index) => (
-                <span
-                  key={index}
-                  className={
-                    line.startsWith("+") && !line.startsWith("+++")
-                      ? "diff-add"
-                      : line.startsWith("-") && !line.startsWith("---")
-                        ? "diff-del"
-                        : line.startsWith("@@")
-                          ? "diff-hunk"
-                          : "diff-ctx"
-                  }
-                >
-                  {line}
-                  {"\n"}
-                </span>
-              ))}
+              {patch.diff_text.split("\n").map((line, index) => {
+                const kind = lineKind(line);
+                return (
+                  <span key={index} className={lineClass(kind)} aria-label={`${kind} ${line}`}>
+                    {line || " "}
+                  </span>
+                );
+              })}
             </pre>
           ) : (
             <table className="grid">

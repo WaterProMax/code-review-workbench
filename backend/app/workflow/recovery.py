@@ -736,7 +736,7 @@ class RecoveryCoordinator:
                 )
             if attempt.task_id != root_task_id:
                 self.repos.tasks.update(
-                    attempt.task_id, status=TaskStatus.FAILED.value, conn=conn
+                    attempt.task_id, status=TaskStatus.CANCELLED.value, conn=conn
                 )
             self.sink(root_task_id, "controller").emit(
                 EventType.TERMINAL_RECORDED,
@@ -790,7 +790,7 @@ class RecoveryCoordinator:
         state = self.locks.budget_state(root_task_id, budgets)
         items: list[dict[str, Any]] = []
         for kind, delta in kinds:
-            entry = dict(state[kind])
+            entry: dict[str, Any] = dict(state[kind])
             entry["budget_kind"] = kind
             entry["delta"] = delta
             items.append(entry)
