@@ -182,6 +182,12 @@ async def test_workflow_graph_matches_compiled_nodes(settings: Settings, tmp_pat
         assert {node["id"] for node in body["nodes"]} == expected
         missing = await client.get("/api/workflows/does-not-exist/graph")
         assert missing.status_code == 404
+        versions_before = {row["workflow_version"] for row in services.repos.workflows.list()}
+        preview = await client.post("/api/workflows/graph", json=workflow.model_dump(mode="json"))
+        assert preview.status_code == 200, preview.text
+        assert {node["id"] for node in preview.json()["nodes"]} == expected
+        versions_after = {row["workflow_version"] for row in services.repos.workflows.list()}
+        assert versions_after == versions_before
 
 
 @pytest.mark.asyncio

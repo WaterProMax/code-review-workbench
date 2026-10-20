@@ -116,10 +116,21 @@ async def get_workflow(request: Request, workflow_version: str) -> WorkflowConfi
     return services(request).workflow(workflow_version)
 
 
+@router.post("/workflows/graph", response_model=WorkflowGraphResponse)
+async def preview_workflow_graph(request: Request, payload: WorkflowConfig) -> WorkflowGraphResponse:
+    """Compile the control graph for a canvas config without saving a version."""
+    svc = services(request)
+    return _graph_for(svc, _validated(svc, payload))
+
+
 @router.get("/workflows/{workflow_version}/graph", response_model=WorkflowGraphResponse)
 async def workflow_graph(request: Request, workflow_version: str) -> WorkflowGraphResponse:
     svc = services(request)
     workflow = svc.workflow(workflow_version)
+    return _graph_for(svc, workflow)
+
+
+def _graph_for(svc, workflow: WorkflowConfig) -> WorkflowGraphResponse:
     return build_workflow_graph(
         settings=svc.settings,
         repos=svc.repos,

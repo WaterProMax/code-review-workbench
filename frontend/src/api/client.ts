@@ -134,6 +134,13 @@ export function getWorkflowGraph(workflowVersion: string): Promise<RuntimeGraphR
   return request<RuntimeGraphResponse>(`/workflows/${encodeURIComponent(workflowVersion)}/graph`);
 }
 
+export function previewWorkflowGraph(config: WorkflowConfig): Promise<RuntimeGraphResponse> {
+  return request<RuntimeGraphResponse>("/workflows/graph", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
 /** Browser URL for the fixed source archive. `version` is omitted when unknown. */
 export function sourceZipUrl(rootTaskId: string, version?: string | null): string {
   const base = `/api/tasks/${encodeURIComponent(rootTaskId)}/source.zip`;

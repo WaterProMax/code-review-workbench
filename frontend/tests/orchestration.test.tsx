@@ -342,7 +342,7 @@ describe("orchestration canvas", () => {
       },
     ];
     on("GET", /^\/api\/workflows\/wf-runtime$/, () => json({ ...sequentialConfig(), workflow_version: "wf-runtime" }));
-    on("GET", /\/api\/workflows\/wf-runtime\/graph$/, () =>
+    on("POST", /\/api\/workflows\/graph$/, () =>
       json({
         mermaid: "flowchart TD",
         nodes: [{ id: "dispatch" }, { id: "run_attempt" }],
@@ -374,7 +374,7 @@ describe("orchestration canvas", () => {
       },
     ];
     on("GET", /^\/api\/workflows\/wf-missing$/, () => json({ ...sequentialConfig(), workflow_version: "wf-missing" }));
-    on("GET", /\/api\/workflows\/wf-missing\/graph$/, () => json({ code: "NOT_FOUND", message: "missing" }, 404));
+    on("POST", /\/api\/workflows\/graph$/, () => json({ code: "NOT_FOUND", message: "missing" }, 404));
     renderPage();
     await screen.findByRole("heading", { name: "编排配置" });
     fireEvent.change(screen.getByLabelText("加载已保存版本"), { target: { value: "wf-missing" } });

@@ -10,12 +10,13 @@ import {
   type Edge,
   type Node,
 } from "@xyflow/react";
-import { ApiError, getWorkflowGraph } from "../api/client";
-import type { RuntimeGraphResponse } from "../api/types";
+import { ApiError, getWorkflowGraph, previewWorkflowGraph } from "../api/client";
+import type { RuntimeGraphResponse, WorkflowConfig } from "../api/types";
 import { errorCodeLabel } from "../i18n/zh";
 
 interface Props {
-  workflowVersion: string | null | undefined;
+  workflowVersion?: string | null;
+  config?: WorkflowConfig | null;
 }
 
 const NODE_WIDTH = 180;
@@ -30,52 +31,51 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+const RANK: Record<string, number> = {
+  initialize: 0,
+  plan: 1,
+  validate_plan: 2,
+  replan: 2,
+  commit_plan: 3,
+  budget: 4,
+  parent_decide: 5,
+  validate_action: 6,
+  dispatch: 7,
+  apply_patch: 7,
+  check_finish: 7,
+  enter_wait: 7,
+  run_attempt: 8,
+  await_human: 8,
+  collect_results: 9,
+  finalize_terminated: 9,
+  detect: 10,
+  finalize: 11,
+};
+
 function layoutGraph(graph: RuntimeGraphResponse): Map<string, { x: number; y: number }> {
-  const depth = new Map<string, number>();
-  const incoming = new Map<string, number>();
-  for (const node of graph.nodes) incoming.set(node.id, 0);
-  for (const edge of graph.edges) incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
-  const outgoing = new Map<string, string[]>();
-  for (const edge of graph.edges) {
-    const list = outgoing.get(edge.source) ?? [];
-    list.push(edge.target);
-    outgoing.set(edge.source, list);
-  }
-  const queue = graph.nodes.filter((node) => (incoming.get(node.id) ?? 0) === 0).map((node) => node.id);
-  for (const id of queue) depth.set(id, 0);
-  const indegree = new Map(incoming);
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    const base = depth.get(id) ?? 0;
-    for (const next of outgoing.get(id) ?? []) {
-      depth.set(next, Math.max(depth.get(next) ?? 0, base + 1));
-      indegree.set(next, (indegree.get(next) ?? 1) - 1);
-      if (indegree.get(next) === 0) queue.push(next);
-    }
-  }
   const columns = new Map<number, string[]>();
-  for (const node of graph.nodes) {
-    const column = depth.get(node.id) ?? 0;
+  graph.nodes.forEach((node, index) => {
+    const column = RANK[node.id] ?? 12 + index;
     const list = columns.get(column) ?? [];
     list.push(node.id);
     columns.set(column, list);
-  }
+  });
   const positions = new Map<string, { x: number; y: number }>();
   for (const [column, ids] of columns) {
     ids.forEach((id, index) => {
-      positions.set(id, { x: column * 230, y: index * 90 });
+      positions.set(id, { x: column * 210, y: index * 90 });
     });
   }
   return positions;
 }
 
-export function RuntimeGraph({ workflowVersion }: Props) {
+export function RuntimeGraph({ workflowVersion, config }: Props) {
   const [graph, setGraph] = useState<RuntimeGraphResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!workflowVersion) {
+    if (!config && !workflowVersion) {
       setGraph(null);
       setError(null);
       setLoading(false);
@@ -84,7 +84,8 @@ export function RuntimeGraph({ workflowVersion }: Props) {
     let disposed = false;
     setLoading(true);
     setError(null);
-    getWorkflowGraph(workflowVersion)
+    const pending = config ? previewWorkflowGraph(config) : getWorkflowGraph(workflowVersion as string);
+    pending
       .then((next) => {
         if (disposed) return;
         setGraph(next);
@@ -100,7 +101,7 @@ export function RuntimeGraph({ workflowVersion }: Props) {
     return () => {
       disposed = true;
     };
-  }, [workflowVersion]);
+  }, [workflowVersion, config]);
 
   const positions = useMemo(() => (graph ? layoutGraph(graph) : new Map()), [graph]);
   const nodes: Node[] = useMemo(
@@ -141,7 +142,7 @@ export function RuntimeGraph({ workflowVersion }: Props) {
     [graph],
   );
 
-  if (!workflowVersion) {
+  if (!workflowVersion && !config) {
     return <p className="muted">保存或加载工作流版本后才能读取运行时图。业务图仍可继续编辑。</p>;
   }
   if (loading && !graph) return <p className="muted">正在加载运行时图…</p>;

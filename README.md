@@ -23,38 +23,42 @@
 
 执行图由 `backend/app/workflow/builder.py` 的 `build_graph` 编译。下图与当前 `draw_mermaid()` 的节点和边一致：实线是固定边，虚线是条件边或 `Command` 出边。业务步数在 `budget` 判断，框架超步上限是 `recursion_limit`。终态集合 `TERMINAL_ROOT_STATUSES` 由同目录 `nodes.py` 提供，当前为 `completed`、`partial`、`failed`。
 
-结案条件成立时，`check_finish` 同时进入 `finalize` 和 END。`finalize` 写报告，它自己只有一条出边到 END。
+一个批次里的每次尝试由 `dispatch` 用 `Send` 扇出到 `run_attempt`，再汇合到 `collect_results`。人工恢复停在 `await_human` 的 `interrupt` 上，恢复时用 `Command(resume=...)` 进入 `budget`，不再伪造 `detect` 节点。`check_finish` 在结案条件成立时只进入 `finalize`，`finalize` 再进入 END。
 
 ```mermaid
 flowchart TD
   startNode([START]) --> initialize
-  initialize -->|致命错误| planWait[wait]
+  initialize -->|致命错误| enter_wait
   initialize -->|已有合同| budget
   initialize -->|否则| plan
   plan --> validate_plan
   validate_plan -->|计划合法| commit_plan
   validate_plan -->|仍可纠正| replan
-  validate_plan -->|纠正次数用尽| planWait
+  validate_plan -->|纠正次数用尽| enter_wait
   replan --> validate_plan
   commit_plan --> budget
   budget -->|步数未超限| parent_decide
-  budget -->|步数达到上限| planWait
+  budget -->|步数达到上限| enter_wait
   parent_decide --> validate_action
   validate_action -->|dispatch_task 或 dispatch_batch| dispatch
   validate_action -->|apply_patch| apply_patch
   validate_action -->|finish| check_finish
-  validate_action -->|wait_for_recovery| planWait
+  validate_action -->|wait_for_recovery| enter_wait
   validate_action -->|无动作、未知或被拒绝| budget
-  dispatch -->|派发成功| collect_results
+  dispatch -->|每个尝试 Send| run_attempt
+  dispatch -->|空批次| collect_results
   dispatch -->|被拒绝或额度不足| budget
+  run_attempt --> collect_results
   collect_results --> detect
   apply_patch --> detect
   detect --> budget
   check_finish -->|结案条件成立| finalize
   check_finish -->|结案被拒绝| budget
-  check_finish -->|结案条件成立| graphEnd([END])
-  finalize --> graphEnd
-  planWait --> graphEnd
+  finalize --> graphEnd([END])
+  enter_wait --> await_human
+  await_human -->|恢复| budget
+  await_human -->|终止| finalize_terminated
+  finalize_terminated --> graphEnd
 ```
 
 ## 运行环境

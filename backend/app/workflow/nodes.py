@@ -159,7 +159,7 @@ class WorkflowRuntime:
         allowed = constraints.allowed_paths or self.workspace.list_files(
             task.root_task_id, task.source_version
         )
-        return AgentContext(
+        context = AgentContext(
             llm=self.llm,
             tools=self.tools,
             workspace=self.workspace,
@@ -181,6 +181,7 @@ class WorkflowRuntime:
             read_only=True,
         )
         context.cancellation = self.cancellation
+        return context
 
     def _contract(self, state: dict) -> AcceptanceContract:
         return AcceptanceContract.model_validate(state["contract"])

@@ -297,7 +297,7 @@ export function OrchestrationPage() {
             onLayoutChange={(next) => mutate({ layout: next })}
           />
         ) : (
-          <RuntimeGraph workflowVersion={config.workflow_version} />
+          <RuntimeGraph config={config} workflowVersion={config.workflow_version} />
         )}
       </section>
 
