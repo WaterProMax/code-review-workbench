@@ -14,6 +14,7 @@ from app.registry.tools import ToolContext, ToolError, ToolResult
 from app.schemas.artifacts import Patch, StructuredEdit
 from app.schemas.enums import ArtifactType, PatchFormat
 from app.services.tools.common import require_path_in_scope
+from app.services.tools.tamper import find_tampering, reject_patch_text
 from app.services.workspace import is_protected_test_path, parse_unified_diff
 
 
@@ -67,6 +68,17 @@ async def submit_patch(ctx: ToolContext, args: SubmitPatchArgs) -> ToolResult:
             f"候选补丁不得修改已有验收测试或测试发现配置：{protected}；"
             "确需改变验收测试请新建任务",
         )
+
+    # BEGIN sandbox tamper guard (TEST_TAMPERING). Keep this block intact when merging.
+    tamper_hits = reject_patch_text(args.diff_text or "")
+    for edit in args.edits:
+        tamper_hits.extend(find_tampering([edit.file_path, *edit.replace.splitlines()]))
+    if tamper_hits:
+        raise ToolError(
+            "PATCH_REJECTED",
+            "补丁被拒绝：TEST_TAMPERING " + "; ".join(tamper_hits[:12]),
+        )
+    # END sandbox tamper guard
 
     patch = patch.model_copy(update={"patch_id": f"P-{_short(ctx)}"})
     artifact = ctx.artifacts.save_json(

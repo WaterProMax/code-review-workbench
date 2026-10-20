@@ -44,8 +44,12 @@ CAP_MAX_GRAPH_STEPS = 2048
 
 
 class Settings(BaseSettings):
+    # Production injects HW2_* through the process environment (the start script).
+    # Local dev may still use a gitignored project-root .env, but the path is
+    # absolute so it does not depend on the working directory and does not walk
+    # out of backend/ via a relative ../.env.
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         env_prefix="HW2_",
@@ -55,7 +59,7 @@ class Settings(BaseSettings):
     model_provider: Literal["deepseek"] = "deepseek"
     model_base_url: str = "https://api.deepseek.com"
     model_name: str = "deepseek-chat"
-    model_api_key: str | None = None
+    model_api_key: str | None = Field(default=None, repr=False)
     model_temperature: float = 0.0
 
     # --- storage / server ---------------------------------------------------
@@ -92,6 +96,9 @@ class Settings(BaseSettings):
     # --- testing ------------------------------------------------------------
     # Only honored when an explicit scripted model is injected by tests.
     force_scripted_model: bool = False
+    # bwrap is the default. "none" runs only when HW2_ALLOW_UNSANDBOXED=1;
+    # assert_sandbox_config enforces that at pytest entry, not at import.
+    sandbox: Literal["bwrap", "docker", "none"] = "bwrap"
 
     @field_validator("data_dir", "config_dir", mode="before")
     @classmethod
