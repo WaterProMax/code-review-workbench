@@ -34,6 +34,7 @@ CAP_MAX_REVIEW_RETRIES = 10
 CAP_MAX_FIX_RETRIES = 10
 CAP_MAX_EVIDENCE_RETRIES = 10
 CAP_MAX_GENERATE_RETRIES = 10
+CAP_MAX_PATCH_INVALID = 2
 CAP_MAX_PARENT_CORRECTIONS = 5
 CAP_MAX_MODEL_RETRIES = 5
 CAP_MAX_TOOL_STEPS = 64
@@ -58,6 +59,9 @@ class Settings(BaseSettings):
     model_api_key: str | None = None
     model_temperature: float = 0.0
 
+    # Optional bearer token for /api/*. Empty means the API stays open.
+    api_token: str | None = Field(default=None, repr=False)
+
     # --- storage / server ---------------------------------------------------
     data_dir: Path = DEFAULT_DATA_DIR
     config_dir: Path = DEFAULT_CONFIG_DIR
@@ -79,6 +83,7 @@ class Settings(BaseSettings):
     max_fix_retries: int = Field(default=2, ge=0)
     max_evidence_retries: int = Field(default=2, ge=0)
     max_generate_retries: int = Field(default=2, ge=0)
+    max_patch_invalid: int = Field(default=2, ge=0)
     max_parent_corrections: int = Field(default=2, ge=0)
     max_model_retries: int = Field(default=2, ge=0)
 
@@ -100,6 +105,13 @@ class Settings(BaseSettings):
             return Path(value).expanduser()
         return value
 
+    @field_validator("api_token", mode="before")
+    @classmethod
+    def _blank_token(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def _enforce_caps(self) -> "Settings":
         checks = [
@@ -109,6 +121,7 @@ class Settings(BaseSettings):
             ("max_fix_retries", self.max_fix_retries, CAP_MAX_FIX_RETRIES),
             ("max_evidence_retries", self.max_evidence_retries, CAP_MAX_EVIDENCE_RETRIES),
             ("max_generate_retries", self.max_generate_retries, CAP_MAX_GENERATE_RETRIES),
+            ("max_patch_invalid", self.max_patch_invalid, CAP_MAX_PATCH_INVALID),
             ("max_parent_corrections", self.max_parent_corrections, CAP_MAX_PARENT_CORRECTIONS),
             ("max_model_retries", self.max_model_retries, CAP_MAX_MODEL_RETRIES),
             ("max_tool_steps", self.max_tool_steps, CAP_MAX_TOOL_STEPS),

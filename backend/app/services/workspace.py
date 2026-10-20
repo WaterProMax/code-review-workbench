@@ -521,7 +521,7 @@ class WorkspaceService:
                 for rel in self.list_files(root_task_id, base_version)
             }
         except (DiffError, SyntaxError, UnicodeDecodeError) as exc:
-            evidence = self.artifacts.save_text(
+            self.artifacts.save_text(
                 root_task_id=root_task_id,
                 artifact_type=ArtifactType.EVIDENCE,
                 text=f"patch {patch.patch_id} could not be applied to {base_version}:\n{exc}\n",
@@ -662,6 +662,20 @@ class WorkspaceService:
             manifest.parent_version == application.base_version
             and manifest.patch_id == application.patch_id
         )
+
+    def preview_patch(self, root_task_id: str, base_version: str, patch: Patch) -> None:
+        """Apply ``patch`` to a throwaway copy of ``base_version``.
+
+        Nothing is published and no patch artifact is written. Format and apply
+        failures raise ``DiffError`` or ``SyntaxError`` so the caller can hand
+        the text back to the model in the same attempt.
+        """
+        _candidate_id, candidate = self.create_candidate(root_task_id, base_version)
+        try:
+            changed = self._apply_to_candidate(candidate, patch)
+            self._syntax_check(candidate, changed)
+        finally:
+            shutil.rmtree(candidate, ignore_errors=True)
 
     def _apply_to_candidate(self, candidate: Path, patch: Patch) -> list[str]:
         changed: list[str] = []

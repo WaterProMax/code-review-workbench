@@ -13,7 +13,11 @@ from httpx import ASGITransport
 
 from app.api.tasks import iter_task_events
 from app.main import create_app
+from app.schemas.actions import DispatchItem, DispatchTaskAction
+from app.schemas.api import CancelRequest, ResumeRequest
+from app.schemas.common import TaskDep
 from app.schemas.enums import AttemptStatus, EventType, RootStatus, TerminalOrigin
+from app.schemas.tasks import InputRefs
 from app.services.events import EventContext, EventSink
 from app.settings import Settings
 from app.workflow.recovery import RecoveryCoordinator
@@ -83,6 +87,18 @@ async def test_stream_returns_events_after_seq_with_sse_headers(settings: Settin
 
         missing = await client.get("/api/tasks/does-not-exist/stream")
         assert missing.status_code == 404
+
+        resumed = await asyncio.wait_for(
+            client.get(
+                f"/api/tasks/{root.task_id}/stream",
+                params={"after_seq": 0},
+                headers={"Last-Event-ID": str(first.sequence)},
+            ),
+            timeout=5,
+        )
+        assert f"id: {second.sequence}" in resumed.text
+        assert f"id: {first.sequence}" not in resumed.text
+        assert [item["event_id"] for item in _data_events(resumed.text)] == [second.event_id]
 
 
 @pytest.mark.asyncio
@@ -193,6 +209,7 @@ async def test_cancel_checks_revision_and_foreign_lease(settings: Settings, tmp_
     assert terminal.origin is TerminalOrigin.CONTROLLER
     assert terminal.outcome.value == "failed"
     assert services.repos.attempts.get(attempt.attempt_id).status == AttemptStatus.INVALIDATED.value
+    assert services.repos.tasks.get(child.task_id).status == "cancelled"
     assert services.repos.attempts.list_active(running.task_id) == []
     assert services.governance.recovery.can_resume(running.task_id) == []
     assert isinstance(services.governance.recovery, RecoveryCoordinator)
@@ -276,3 +293,94 @@ async def test_cancel_running_task_signals_the_live_run(settings: Settings, tmp_
         )
         assert terminated.status_code == 200, terminated.text
         assert terminated.json()["status"] in {RootStatus.PARTIAL.value, RootStatus.COMPLETED.value}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_child_can_be_redispatched(settings: Settings, tmp_path: Path) -> None:
+    settings = settings.model_copy(update={"data_dir": tmp_path / "cancel-redispatch"})
+    app = create_app(settings, llm_factory=make_scripted_client)
+    services = app.state.services
+    workflow = sequential_workflow()
+    services.repos.workflows.insert(workflow)
+    root = builders.new_root(
+        services.repos,
+        root_task_id="T-cancel-again",
+        status=RootStatus.RUNNING.value,
+        workflow_version=workflow.workflow_version or "wf-1",
+    )
+    child = builders.new_child(
+        services.repos, root, task_id="T-cancel-again-C1", task_kind="review", status="running"
+    )
+    attempt = builders.new_attempt(
+        services.repos, root, child, attempt_id="T-cancel-again-C1-A1", batch_id="B-cancel-again"
+    )
+    services.repos.attempts.update_status(
+        attempt.attempt_id, AttemptStatus.RUNNING, started_at=datetime.now(timezone.utc)
+    )
+    services.repos.controls.ensure(root.task_id, "seg-cancel-again", 32)
+    acquired, _control = services.locks.acquire(root.task_id, services.runner.owner, ttl_seconds=120)
+    assert acquired
+    services.governance.recovery.cancel(
+        root.task_id,
+        CancelRequest(expected_revision=root.revision, reason="取消后准备重派"),
+        owner=services.runner.owner,
+        operation_key="cancel-redispatch",
+    )
+    cancelled = services.repos.tasks.get(child.task_id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert services.repos.attempts.get(attempt.attempt_id).status == AttemptStatus.INVALIDATED.value
+    assert services.governance.task_service.has_in_flight_work(root.task_id) is False
+
+    action = DispatchTaskAction(
+        task=DispatchItem(
+            agent_id="fixer",
+            task_kind="fix",
+            goal="在取消的审查之后修复",
+            input_refs=InputRefs(source="art-source", acceptance_contract="art-contract"),
+            acceptance_criteria=["缺陷被修复"],
+            depends_on=[TaskDep(task_id=child.task_id, condition="review_completed")],
+            reason="取消的子任务视为已结束",
+        )
+    )
+    problems = services.governance.controller.validate_action(
+        action,
+        root_task_id=root.task_id,
+        workflow=workflow,
+        source_version="sv-1",
+    )
+    assert not any("尚未结束" in problem for problem in problems)
+
+    current = services.repos.tasks.get(root.task_id)
+    assert current is not None
+    services.governance.recovery.resume(
+        root.task_id,
+        ResumeRequest(expected_revision=current.revision, reason="重新派发已取消的子任务"),
+        budgets=workflow.budgets,
+        owner=services.runner.owner,
+        operation_key="resume-redispatch",
+    )
+    item = DispatchItem(
+        agent_id="reviewer",
+        task_kind="review",
+        goal="重新审查",
+        input_refs=InputRefs(source="art-source", acceptance_contract="art-contract"),
+        acceptance_criteria=["指出缺陷"],
+        task_id=child.task_id,
+        reason="取消后重新派发",
+    )
+    reason = services.governance.controller.retry_reason(item, source_version="sv-1")
+    control = services.repos.controls.get(root.task_id)
+    assert control is not None
+    _batch, attempts = services.governance.task_service.register_dispatch(
+        root_task_id=root.task_id,
+        items=[item],
+        workflow=workflow,
+        source_version="sv-1",
+        contract_version="contract-1",
+        retry_reason=reason,
+        fencing_token=control.fencing_token,
+    )
+    assert attempts[-1].attempt_id != attempt.attempt_id
+    assert services.repos.tasks.get(child.task_id).status == "queued"
+    assert len(services.repos.attempts.list_by_task(child.task_id)) == 2

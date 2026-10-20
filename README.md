@@ -1,11 +1,10 @@
 # 代码审查与修复工作台
 
-在目录 `Test2` 中独立实现：用户上传一个或多个 Python 文件并输入检查目标，
+代码审查工作台：用户上传一个或多个 Python 文件并输入检查目标，
 父 Agent 建立总任务与子任务，按需派发**审查 / 修复 / 验证**子 Agent，接收回报后做确定性检测并决定下一步；
 全过程的派发、尝试、工具调用、回报与决策事件都可追踪、可查询、可恢复。
 
-编排使用真实的 LangGraph（条件分支、循环、并行、状态归并、SQLite 检查点），
-不依赖、不复制 Test1 的任何代码或运行目录。
+编排使用真实的 LangGraph（条件分支、循环、并行、状态归并、SQLite 检查点）。
 
 ## 文档索引
 
@@ -93,7 +92,7 @@ npm install
 复制示例环境文件并按需修改；**只有后端**读取模型密钥。
 
 ```bash
-cp .env.example .env            # 在 Test2 根目录（或放到 backend/.env）
+cp .env.example .env            # 在仓库根目录（或放到 backend/.env）
 ```
 
 关键变量（完整列表见 `.env.example`）：
@@ -103,7 +102,7 @@ cp .env.example .env            # 在 Test2 根目录（或放到 backend/.env�
 | `HW2_MODEL_BASE_URL` | 模型服务地址，默认 `https://api.deepseek.com` |
 | `HW2_MODEL_NAME` | 模型名，默认 `deepseek-chat` |
 | `HW2_MODEL_API_KEY` | 模型密钥；**未配置时**可打开工作台、查看已有任务，但提交新的模型任务会返回明确的配置错误，不会伪造成功 |
-| `HW2_DATA_DIR` | 运行数据目录，默认 `<Test2>/data` |
+| `HW2_DATA_DIR` | 运行数据目录，默认仓库下的 `data` |
 
 服务端对各项额度设有上限：配置只能收紧、不能突破上限；前端无法提高上限。
 
@@ -143,13 +142,13 @@ cd backend && uv run pytest -q
 cd frontend && npm test
 ```
 
-2026-10-19 实测：后端 **245 passed**（`cd backend && uv run pytest -q`），前端 **19 passed**（`cd frontend && npm test`）。
+2026-10-20 实测（Linux）：`cd backend && uv run pytest -q` 收集 253 项。用户线程数低于沙箱 `RLIMIT_NPROC=256` 时为 **253 passed**；本机用户线程已超过该上限时，`test_timeout_reaps_descendants` 与 `test_cancelled_check_reaps_descendants` 因 `BlockingIOError` 失败（251 passed, 2 failed）。计数依赖环境（Linux，沙箱测试需要 bubblewrap）。
 
 运行中的任务详情优先用 `GET /api/tasks/{id}/stream` 收事件；浏览器没有 `EventSource` 或连接失败时继续轮询。`queued` / `running` 可 `POST /api/tasks/{id}/cancel`，任务进入 `waiting_recovery` 后再恢复或终止。字段见 [docs/API.md](docs/API.md) 第 8 节。
 
 ## 数据目录
 
-运行数据默认写入 `Test2/data`（已加入忽略规则），互相隔离：
+运行数据默认写入仓库下的 `data`（已加入忽略规则），互相隔离：
 
 ```
 data/

@@ -5,7 +5,6 @@ from __future__ import annotations
 import operator
 from typing import Annotated, TypedDict
 
-import pytest
 
 from app.storage.checkpoints import open_checkpointer, thread_id_for
 

@@ -39,6 +39,7 @@ _STATUS: dict[ErrorCode, int] = {
     ErrorCode.NOT_RESUMABLE: 409,
     ErrorCode.NOT_TERMINABLE: 409,
     ErrorCode.NOT_RECOVERABLE: 422,
+    ErrorCode.UNAUTHORIZED: 401,
     ErrorCode.MODEL_NOT_CONFIGURED: 503,
     ErrorCode.MODEL_REQUEST_FAILED: 502,
     ErrorCode.TEMPORARY_FAILURE: 503,

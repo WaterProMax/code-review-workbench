@@ -778,9 +778,9 @@ def test_a32_verify_top_up_grants_only_verify_and_over_cap_writes_nothing(
 
 
 # --------------------------------------------------------------------------- #
-# A33: a fault re-dispatch of a fix attempt consumes both declared budgets
+# A33: an execution-fault fix consumes only the fix retry, not a repair round
 # --------------------------------------------------------------------------- #
-def test_a33_fix_fault_retry_consumes_both_declared_budgets(
+def test_a33_fix_fault_retry_consumes_only_fix_retry(
     settings: Settings,
     repos: Repos,
     artifacts: ArtifactService,
@@ -797,7 +797,6 @@ def test_a33_fix_fault_retry_consumes_both_declared_budgets(
         workflow=sequential_workflow(),
     )
     assert harness.task_service._budgets_for("fix", RetryReason.EXECUTION_FAULT.value) == [
-        BudgetKind.REPAIR_ROUND.value,
         BudgetKind.FIX_RETRY.value,
     ]
     # a plain business repair consumes only a repair round

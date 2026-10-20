@@ -6,10 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from app.agents.parent import ParentAgent
 from app.providers.base import LLMRequest
 from app.providers.scripted import ScriptedLLMClient
-from app.registry.agents import build_default_agent_registry
 from app.registry.tools import ToolRegistry
 from app.schemas.enums import CheckMode, WorkflowNodeType
 from app.schemas.workflows import (
@@ -21,7 +19,6 @@ from app.schemas.workflows import (
 from app.services.artifacts import ArtifactService
 from app.services.execution_locks import ExecutionLockService
 from app.services.task_service import TaskService
-from app.services.tools import build_default_registry
 from app.services.workspace import WorkspaceService
 from app.settings import Settings
 from app.storage.repositories import Repos
@@ -71,14 +68,18 @@ FIX_DIFF = (
     "     return items\n"
 )
 
-# A "repair" that changes the file but leaves the defect in place: it proves that
-# a later round and the verification evidence — not the fixer's claim — decide.
+# A "repair" that changes executable code but leaves the mutable default in place.
+# The edit sits above add_item so a later real fix still matches that function.
+# A comment-only diff is rejected as a spec rewrite, so this round has to edit code.
 BOGUS_DIFF = (
     "--- a/helpers.py\n"
     "+++ b/helpers.py\n"
-    "@@ -1,1 +1,2 @@\n"
-    "+# repair round applied, defect still present\n"
+    "@@ -1,3 +1,5 @@\n"
+    "+def _repair_marker():\n"
+    "+    return None\n"
     " def add_item(item, items=[]):\n"
+    "     items.append(item)\n"
+    "     return items\n"
 )
 
 # The finding a reviewer would record for BUGGY_SOURCE.

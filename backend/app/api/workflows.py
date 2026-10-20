@@ -20,9 +20,11 @@ from app.extensions import ExtensionError, validate_workflow_config
 from app.schemas.api import (
     ErrorCode,
     TemplateListing,
+    WorkflowGraphResponse,
     WorkflowListItem,
     WorkflowSaveResponse,
 )
+from app.services.runtime_graph import build_workflow_graph
 from app.schemas.workflows import WorkflowConfig
 
 router = APIRouter(tags=["workflows"])
@@ -112,3 +114,19 @@ async def list_workflows(request: Request) -> list[WorkflowListItem]:
 @router.get("/workflows/{workflow_version}", response_model=WorkflowConfig)
 async def get_workflow(request: Request, workflow_version: str) -> WorkflowConfig:
     return services(request).workflow(workflow_version)
+
+
+@router.get("/workflows/{workflow_version}/graph", response_model=WorkflowGraphResponse)
+async def workflow_graph(request: Request, workflow_version: str) -> WorkflowGraphResponse:
+    svc = services(request)
+    workflow = svc.workflow(workflow_version)
+    return build_workflow_graph(
+        settings=svc.settings,
+        repos=svc.repos,
+        workflow=workflow,
+        artifacts=svc.artifacts,
+        workspace=svc.workspace,
+        locks=svc.locks,
+        registry=svc.registry,
+        extensions=svc.extensions,
+    )

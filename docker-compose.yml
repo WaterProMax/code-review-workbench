@@ -24,10 +24,11 @@ services:
       HW2_MODEL_NAME: ${HW2_MODEL_NAME:-deepseek-chat}
       HW2_MODEL_API_KEY: ${HW2_MODEL_API_KEY:-}
       HW2_MODEL_TEMPERATURE: ${HW2_MODEL_TEMPERATURE:-0.0}
+      HW2_API_TOKEN: ${HW2_API_TOKEN:-}
     volumes:
       - hw2-data:/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test:
         [
