@@ -8,6 +8,7 @@ import pytest
 
 
 from app.schemas.api import ResumeRequest
+from app.schemas.enums import EventType
 from app.storage.checkpoints import open_checkpointer
 from app.workflow.runner import WorkflowRunner
 from tests.fixtures.workflow import sequential_workflow, prepare_source, build_harness, make_scripted_client, BUGGY_SOURCE, MUTABLE_DEFAULT_FINDING
@@ -75,7 +76,14 @@ async def test_resume_keeps_denial_audit_without_reusing_old_corrections(setting
         assert contexts[before]["action_rejections"] == []
         first_decision = next(r for r in llm.calls[call_count:] if r.script_key == "parent:decide")
         assert len(first_decision.messages) == 1
-        assert second["action_rejections"] == old_denials
+        # The new segment's channel is empty. The denials stay in the event table.
+        assert second["action_rejections"] == []
+        denied = [
+            event
+            for event in repos.events.list_after(root_id, 0, limit=2000)
+            if event.event_type is EventType.ACTION_REJECTED
+        ]
+        assert len(denied) >= len(old_denials)
 
 
 def test_stale_agent_result_rejected(repos, locks):
