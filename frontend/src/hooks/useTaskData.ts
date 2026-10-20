@@ -72,6 +72,14 @@ async function loadCoverage(artifacts: ArtifactView[]) {
 }
 
 const POLL_MS = 1500;
+const REFRESH_DEBOUNCE_MS = 300;
+const FULL_REFRESH_EVENTS = new Set([
+  "patch_applied",
+  "detection_completed",
+  "task_completed",
+  "waiting_recovery",
+  "terminal_recorded",
+]);
 
 async function cachedArtifact<T>(cache: Map<string, unknown>, item: ArtifactView): Promise<T> {
   const hit = cache.get(item.artifact_id);
@@ -118,7 +126,6 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
   const seen = useRef<Set<string>>(new Set());
   const backoff = useRef(1000);
   const artifactCache = useRef(new Map<string, unknown>());
-  const inFlight = useRef(false);
   const activeRef = useRef(false);
   const lastOk = useRef(0);
   const streamRef = useRef<EventSource | null>(null);
@@ -131,7 +138,7 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     }
   }, []);
 
-  const load = useCallback(async (): Promise<{ status: string; ok: boolean }> => {
+  const load = useCallback(async (isCurrent: () => boolean): Promise<{ status: string; ok: boolean }> => {
     if (!rootTaskId) return { status: "queued", ok: false };
     try {
       const [nextDetail, nextAttempts, nextArtifacts, nextEvents, nextFindings] = await Promise.all([
@@ -141,6 +148,7 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
         listEvents(rootTaskId, cursor.current),
         listFindings(rootTaskId),
       ]);
+      if (!isCurrent()) return { status: nextDetail.status, ok: true };
       setDetail(nextDetail);
       setAttempts(nextAttempts);
       setArtifacts(nextArtifacts);
@@ -156,19 +164,24 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
         loadCoverage(nextArtifacts),
         loadArtifactBodies(nextArtifacts, artifactCache.current),
       ]);
+      if (!isCurrent()) return { status: nextDetail.status, ok: true };
       setBodies({ findings: nextFindings, findingsCoverage: coverage, ...loaded });
       if (TERMINAL.has(nextDetail.status)) {
         try {
-          setReport(await getReport(rootTaskId));
+          const nextReport = await getReport(rootTaskId);
+          if (!isCurrent()) return { status: nextDetail.status, ok: true };
+          setReport(nextReport);
         } catch {
-          setReport(null);
+          if (isCurrent()) setReport(null);
         }
       }
+      if (!isCurrent()) return { status: nextDetail.status, ok: true };
       setError(null);
       backoff.current = 1000;
       setUpdatedAt(Date.now());
       return { status: nextDetail.status, ok: true };
     } catch (err) {
+      if (!isCurrent()) return { status: "running", ok: false };
       setError(err instanceof Error ? err.message : String(err));
       backoff.current = Math.min(backoff.current * 2, 8000);
       return { status: "running", ok: false };
@@ -190,6 +203,9 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     setStreamStatus("idle");
     setLoading(true);
     let disposed = false;
+    let inFlight = false;
+    let rerun = false;
+    let refreshTimer: number | null = null;
 
     const closeStream = () => {
       const source = streamRef.current;
@@ -210,7 +226,7 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     const holdStream = (): boolean => {
       if (!streamWanted.current || typeof EventSource === "undefined" || !rootTaskId) return false;
       const current = streamRef.current;
-      if (current && current.readyState !== EventSource.CLOSED) return true;
+      if (current && current.readyState !== 2 && current.readyState !== EventSource.CLOSED) return true;
       let source: EventSource;
       try {
         source = new EventSource(taskStreamUrl(rootTaskId, cursor.current));
@@ -232,7 +248,10 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
           );
         }
         cursor.current = Math.max(cursor.current, event.sequence);
-        void tickRef.current?.();
+        if (FULL_REFRESH_EVENTS.has(event.event_type)) {
+          if (inFlight) rerun = true;
+          else scheduleFullRefresh();
+        }
       };
       source.onerror = () => {
         if (streamRef.current !== source) return;
@@ -241,15 +260,28 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
       return true;
     };
 
+    const scheduleFullRefresh = () => {
+      if (disposed) return;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        void tick();
+      }, REFRESH_DEBOUNCE_MS);
+    };
+
     const tick = async () => {
-      if (disposed || inFlight.current) return;
-      inFlight.current = true;
+      if (disposed) return;
+      if (inFlight) {
+        rerun = true;
+        return;
+      }
+      inFlight = true;
       stop();
       let active = false;
       let delay = POLL_MS;
       let outcomeOk = false;
       try {
-        const outcome = await load();
+        const outcome = await load(() => !disposed);
         if (disposed) return;
         setLoading(false);
         active = outcome.status === "running" || outcome.status === "queued";
@@ -262,8 +294,13 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
         delay = backoff.current;
         activeRef.current = true;
       } finally {
-        inFlight.current = false;
+        inFlight = false;
         if (disposed) return;
+        if (rerun) {
+          rerun = false;
+          void tick();
+          return;
+        }
         const streaming = active && outcomeOk && holdStream();
         if (streaming) {
           setStreamStatus("streaming");
@@ -284,13 +321,17 @@ export function useTaskData(rootTaskId: string | undefined): TaskData {
     tickRef.current = tick;
     void tick();
     const watchdog = window.setInterval(() => {
-      if (disposed || !activeRef.current || inFlight.current || timer.current !== null) return;
+      if (disposed || !activeRef.current || inFlight || timer.current !== null) return;
       if (Date.now() - lastOk.current > POLL_MS * 3) void tick();
     }, POLL_MS);
     return () => {
       tickRef.current = null;
       disposed = true;
       streamWanted.current = false;
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
       closeStream();
       window.clearInterval(watchdog);
       stop();

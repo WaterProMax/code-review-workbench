@@ -1,6 +1,22 @@
 /** Display semantics: execution status and check verdict are shown separately. */
 
 import type { CheckStatus, DetectionCategory, RootStatus, TaskStatus, AttemptStatus } from "./api/types";
+import {
+  actionLabel,
+  attemptStatusLabels,
+  checkMethodLabel,
+  checkStatusLabels,
+  detectionLabels,
+  errorCategoryLabel,
+  errorCodeLabel,
+  eventTypeLabel,
+  retryReasonLabels,
+  roleLabel,
+  rootStatusLabels,
+  skipReasonLabels,
+  taskKindLabel,
+  taskStatusLabels,
+} from "./i18n/zh";
 
 export interface Token {
   label: string;
@@ -11,59 +27,61 @@ export interface Token {
 export function rootStatusToken(status: RootStatus): Token {
   switch (status) {
     case "queued":
-      return { label: "已排队", className: "badge queued" };
+      return { label: rootStatusLabels.queued, className: "badge queued" };
     case "running":
-      return { label: "执行中", className: "badge running" };
+      return { label: rootStatusLabels.running, className: "badge running" };
     case "waiting_recovery":
-      return { label: "待恢复", className: "badge waiting" };
+      return { label: rootStatusLabels.waiting_recovery, className: "badge waiting" };
     case "completed":
-      return { label: "已完成", className: "badge ok" };
+      return { label: rootStatusLabels.completed, className: "badge ok" };
     case "partial":
-      return { label: "部分完成", className: "badge partial" };
+      return { label: rootStatusLabels.partial, className: "badge partial" };
     case "failed":
-      return { label: "失败", className: "badge failed" };
+      return { label: rootStatusLabels.failed, className: "badge failed" };
     case "interrupted":
-      return { label: "已中断", className: "badge interrupted" };
+      return { label: rootStatusLabels.interrupted, className: "badge interrupted" };
     default:
-      return { label: status, className: "badge" };
+      return { label: rootStatusLabels[status] ?? status, className: "badge" };
   }
 }
 
 export function taskStatusToken(status: TaskStatus): Token {
   switch (status) {
     case "blocked":
-      return { label: "未派发", className: "badge blocked" };
+      return { label: taskStatusLabels.blocked, className: "badge blocked" };
     case "queued":
-      return { label: "已派发", className: "badge queued" };
+      return { label: taskStatusLabels.queued, className: "badge queued" };
     case "running":
-      return { label: "执行中", className: "badge running" };
+      return { label: taskStatusLabels.running, className: "badge running" };
     case "completed":
-      return { label: "执行完成", className: "badge ok" };
+      return { label: taskStatusLabels.completed, className: "badge ok" };
     case "failed":
-      return { label: "执行失败", className: "badge failed" };
+      return { label: taskStatusLabels.failed, className: "badge failed" };
     case "skipped":
-      return { label: "已跳过", className: "badge skipped" };
+      return { label: taskStatusLabels.skipped, className: "badge skipped" };
+    case "cancelled":
+      return { label: taskStatusLabels.cancelled, className: "badge cancelled" };
     default:
-      return { label: status, className: "badge" };
+      return { label: taskStatusLabels[status] ?? status, className: "badge" };
   }
 }
 
 export function attemptStatusToken(status: AttemptStatus): Token {
   switch (status) {
     case "queued":
-      return { label: "已登记", className: "badge queued" };
+      return { label: attemptStatusLabels.queued, className: "badge queued" };
     case "running":
-      return { label: "执行中", className: "badge running" };
+      return { label: attemptStatusLabels.running, className: "badge running" };
     case "completed":
-      return { label: "执行完成", className: "badge ok" };
+      return { label: attemptStatusLabels.completed, className: "badge ok" };
     case "failed":
-      return { label: "执行失败", className: "badge failed" };
+      return { label: attemptStatusLabels.failed, className: "badge failed" };
     case "interrupted":
-      return { label: "被中断", className: "badge interrupted" };
+      return { label: attemptStatusLabels.interrupted, className: "badge interrupted" };
     case "invalidated":
-      return { label: "已撤销", className: "badge invalidated" };
+      return { label: attemptStatusLabels.invalidated, className: "badge invalidated" };
     default:
-      return { label: status, className: "badge" };
+      return { label: attemptStatusLabels[status] ?? status, className: "badge" };
   }
 }
 
@@ -77,42 +95,36 @@ export function verdictToken(passed: boolean | null): Token {
 export function checkStatusToken(status: CheckStatus): Token {
   switch (status) {
     case "passed":
-      return { label: "通过", className: "badge ok" };
+      return { label: checkStatusLabels.passed, className: "badge ok" };
     case "failed":
-      return { label: "未通过", className: "badge failed" };
+      return { label: checkStatusLabels.failed, className: "badge failed" };
     case "not_run":
-      return { label: "未执行", className: "badge null" };
+      return { label: checkStatusLabels.not_run, className: "badge null" };
     default:
-      return { label: "无法判定", className: "badge null" };
+      return { label: checkStatusLabels.inconclusive, className: "badge null" };
   }
 }
 
 export function detectionToken(category: DetectionCategory | undefined): Token {
   switch (category) {
     case "pass":
-      return { label: "满足完成条件", className: "badge ok" };
+      return { label: detectionLabels.pass, className: "badge ok" };
     case "code_defect":
-      return { label: "存在代码缺陷", className: "badge failed" };
+      return { label: detectionLabels.code_defect, className: "badge failed" };
     case "insufficient_evidence":
-      return { label: "证据不足", className: "badge null" };
+      return { label: detectionLabels.insufficient_evidence, className: "badge null" };
     case "execution_fault":
-      return { label: "执行故障", className: "badge waiting" };
+      return { label: detectionLabels.execution_fault, className: "badge waiting" };
     case "invalid_result":
-      return { label: "回报无效", className: "badge failed" };
+      return { label: detectionLabels.invalid_result, className: "badge failed" };
     case "no_progress":
-      return { label: "重试无进展", className: "badge waiting" };
+      return { label: detectionLabels.no_progress, className: "badge waiting" };
     default:
       return { label: "未知", className: "badge" };
   }
 }
 
-export const RETRY_REASON_LABELS: Record<string, string> = {
-  initial: "首次派发",
-  business_repair: "业务修复重派",
-  execution_fault: "执行故障重派",
-  insufficient_evidence: "补充证据",
-  new_version_reverify: "新版本重验",
-};
+export const RETRY_REASON_LABELS: Record<string, string> = retryReasonLabels;
 
 export const AGENT_ROLE_LABELS: Record<string, string> = {
   parent: "父 Agent",
@@ -128,10 +140,7 @@ export const TASK_KIND_LABELS: Record<string, string> = {
   verify: "验证",
 };
 
-export const SKIP_REASON_LABELS: Record<string, string> = {
-  first_review_passed: "首次审查通过，后续未执行",
-  not_required: "任务结束时不再需要",
-};
+export const SKIP_REASON_LABELS: Record<string, string> = skipReasonLabels;
 
 export function budgetLabel(kind: string): string {
   const map: Record<string, string> = {
@@ -170,13 +179,96 @@ export function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-export function summarizePayload(payload: Record<string, unknown>): string {
-  if (!payload || Object.keys(payload).length === 0) return "";
-  const preferred = ["reason", "message", "summary", "suggestion", "category", "code", "action", "retry_reason"];
+function payloadText(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  return typeof value === "string" ? value : "";
+}
+
+function summaryForEvent(eventType: string, payload: Record<string, unknown>): string | null {
+  const reason = payloadText(payload, "reason");
+  const message = payloadText(payload, "message");
+  const summary = payloadText(payload, "summary");
+  const kind = taskKindLabel(payloadText(payload, "task_kind") || payloadText(payload, "kind"));
+  switch (eventType) {
+    case "task_created":
+      return payloadText(payload, "goal") ? `已建立任务：${payloadText(payload, "goal")}` : "已建立任务";
+    case "task_dispatched":
+      return kind ? `已派发${kind}` : "已派发子任务";
+    case "attempt_started":
+      return payload.attempt_no != null ? `开始第 ${String(payload.attempt_no)} 次尝试` : "开始尝试";
+    case "tool_started":
+      return payloadText(payload, "tool_name") ? `工具 ${payloadText(payload, "tool_name")} 开始` : "工具开始";
+    case "tool_finished":
+      return payloadText(payload, "tool_name") ? `工具 ${payloadText(payload, "tool_name")} 结束` : "工具结束";
+    case "result_received":
+      return summary || "已收到回报";
+    case "detection_completed":
+      return `检测完成：${detectionLabels[payloadText(payload, "category")] ?? "未知"}`;
+    case "retry_scheduled":
+      return `安排重试：${retryReasonLabels[payloadText(payload, "retry_reason")] ?? (reason || "再次执行")}`;
+    case "task_skipped":
+      return `跳过子任务：${skipReasonLabels[payloadText(payload, "skip_reason")] ?? (reason || "不再执行")}`;
+    case "waiting_recovery":
+      return reason || "进入待恢复";
+    case "task_completed":
+      return "任务完成";
+    case "task_interrupted":
+      return reason || "任务中断";
+    case "task_resumed":
+      return "任务已恢复";
+    case "patch_applied":
+      return payloadText(payload, "result_version")
+        ? `补丁已应用到版本 ${payloadText(payload, "result_version")}`
+        : "补丁已应用";
+    case "patch_application_failed":
+      return payloadText(payload, "error") || reason || "补丁应用失败";
+    case "budget_granted":
+      return `追加额度 ${payloadText(payload, "budget_kind") || ""}`.trim();
+    case "budget_consumed":
+      return `消耗额度 ${payloadText(payload, "budget_kind") || ""}`.trim();
+    case "parent_decided":
+      return payloadText(payload, "reasoning") || summary || `决策：${actionLabel(payloadText(payload, "action"))}`;
+    case "action_rejected":
+      return reason || message || "动作被拒绝";
+    case "terminal_recorded":
+      return `记录终态：${rootStatusLabels[payloadText(payload, "status")] ?? eventTypeLabel(eventType)}`;
+    case "late_result_audit":
+      return "迟到回报已审计";
+    case "check_recorded":
+      return `记录检查 ${payloadText(payload, "check_id") || ""}：${checkMethodLabel(payloadText(payload, "method"))} ${checkStatusLabels[payloadText(payload, "status")] ?? ""}`.trim();
+    default:
+      return null;
+  }
+}
+
+function preferredSummary(payload: Record<string, unknown>): string {
+  const preferred = ["reason", "message", "summary", "suggestion", "category", "code", "action", "retry_reason"] as const;
   for (const key of preferred) {
     const value = payload[key];
-    if (typeof value === "string" && value) return value;
+    if (typeof value !== "string" || !value) continue;
+    if (key === "category") return detectionLabels[value] ?? value;
+    if (key === "code") return errorCodeLabel(value);
+    if (key === "action") return actionLabel(value);
+    if (key === "retry_reason") return retryReasonLabels[value] ?? value;
+    return value;
   }
-  const json = JSON.stringify(payload);
-  return json.length > 160 ? `${json.slice(0, 160)}…` : json;
+  return "详见开发者视图";
 }
+
+/** Chinese one-line summary. Raw JSON stays in the collapsed developer view. */
+export function summarizePayload(payload: Record<string, unknown>, eventType?: string): string {
+  if (!payload || Object.keys(payload).length === 0) return "";
+  if (eventType) {
+    const templated = summaryForEvent(eventType, payload);
+    if (templated) return templated;
+  }
+  return preferredSummary(payload);
+}
+
+export function shortId(id: string | null | undefined): string {
+  if (!id) return "";
+  if (id.length <= 8) return id;
+  return `${id.slice(0, 1)}…${id.slice(-3)}`;
+}
+
+export { errorCategoryLabel, errorCodeLabel, roleLabel };

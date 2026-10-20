@@ -19,6 +19,7 @@ import type {
   CancelResponse,
   TerminateRequest,
   TerminateResponse,
+  RuntimeGraphResponse,
   WorkflowConfig,
   WorkflowListItem,
   WorkflowSaveResponse,
@@ -49,8 +50,18 @@ const BASE = "/api";
 /** Tests shrink this so a hung request does not wait the full ten seconds. */
 export const apiTimeoutMs = { current: 10_000 };
 
+function authHeaders(): Headers {
+  const headers = new Headers();
+  const token = import.meta.env.VITE_API_TOKEN;
+  if (typeof token === "string" && token.length > 0) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+  const headers = authHeaders();
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
@@ -117,6 +128,21 @@ export function listTemplates(): Promise<TemplateListing[]> {
 
 export function getWorkflow(workflowVersion: string): Promise<WorkflowConfig> {
   return request<WorkflowConfig>(`/workflows/${encodeURIComponent(workflowVersion)}`);
+}
+
+export function getWorkflowGraph(workflowVersion: string): Promise<RuntimeGraphResponse> {
+  return request<RuntimeGraphResponse>(`/workflows/${encodeURIComponent(workflowVersion)}/graph`);
+}
+
+/** Browser URL for the fixed source archive. `version` is omitted when unknown. */
+export function sourceZipUrl(rootTaskId: string, version?: string | null): string {
+  const base = `/api/tasks/${encodeURIComponent(rootTaskId)}/source.zip`;
+  return version ? `${base}?version=${encodeURIComponent(version)}` : base;
+}
+
+/** Browser URL for the rendered review report. */
+export function reportMarkdownUrl(rootTaskId: string): string {
+  return `/api/tasks/${encodeURIComponent(rootTaskId)}/report.md`;
 }
 
 export function saveWorkflow(config: WorkflowConfig): Promise<WorkflowSaveResponse> {

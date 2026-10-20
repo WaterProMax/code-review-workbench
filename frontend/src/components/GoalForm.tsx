@@ -7,8 +7,10 @@ interface Props {
   onSubmitted: (task: SubmitTaskResponse) => void;
 }
 
+const SAMPLE_GOAL = "检查可变默认参数与异常处理，发现问题后修复并验证";
+
 export function GoalForm({ sourceId, onSubmitted }: Props) {
-  const [goal, setGoal] = useState("检查可变默认参数与异常处理，发现问题后修复并验证");
+  const [goal, setGoal] = useState("");
   const [workflows, setWorkflows] = useState<WorkflowListItem[]>([]);
   const [version, setVersion] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -63,6 +65,7 @@ export function GoalForm({ sourceId, onSubmitted }: Props) {
           aria-label="检查目标"
           value={goal}
           rows={3}
+          placeholder={SAMPLE_GOAL}
           onChange={(event) => setGoal(event.target.value)}
         />
       </label>
@@ -82,6 +85,9 @@ export function GoalForm({ sourceId, onSubmitted }: Props) {
         <div className="mono">{selected ? (selected.check_mode === "parallel" ? "sequential / parallel（并行模板）" : "sequential（顺序模板）") : "—"}</div>
       </div>
       <div className="actions">
+        <button type="button" onClick={() => setGoal(SAMPLE_GOAL)}>
+          填入示例
+        </button>
         <button type="button" onClick={submit} disabled={busy}>
           {busy ? "提交中…" : "提交任务"}
         </button>
