@@ -96,7 +96,7 @@ npm install
 复制示例环境文件并按需修改；**只有后端**读取模型密钥。
 
 ```bash
-cp .env.example .env            # 在仓库根目录（或放到 backend/.env）
+cp .env.example .env            # 仓库根目录。后端只读这个绝对路径
 ```
 
 关键变量（完整列表见 `.env.example`）：
@@ -146,7 +146,14 @@ cd backend && uv run pytest -q
 cd frontend && npm test
 ```
 
-2026-10-20 实测（Linux）：`cd backend && uv run pytest -q` 收集 253 项。用户线程数低于沙箱 `RLIMIT_NPROC=256` 时为 **253 passed**；本机用户线程已超过该上限时，`test_timeout_reaps_descendants` 与 `test_cancelled_check_reaps_descendants` 因 `BlockingIOError` 失败（251 passed, 2 failed）。计数依赖环境（Linux，沙箱测试需要 bubblewrap）。
+2026-10-20 在 `91df752` 上实测（测试代码与该提交相同），Linux 且已安装 bubblewrap：
+
+- `cd backend && uv run pytest -q` → **274 passed**。`test_timeout_reaps_descendants` 与 `test_cancelled_check_reaps_descendants` 都通过。
+- `cd frontend && npm test` → **27 passed**（9 个文件）。`npm run typecheck` 与 `npm run build` 通过。
+
+这两项回收测试以前会失败：子进程设了按用户计数的 `RLIMIT_NPROC=256`，机器上线程一多，pytest 一 fork 就 `BlockingIOError`。该限制已经去掉。进程数由 bubblewrap 的 pid namespace 控制；Docker 模式用 `--pids-limit`。生成测试默认在 bubblewrap 里跑，本机需要 `bwrap`。没有 bwrap 时执行器报 `SANDBOX_UNAVAILABLE`，不会静默取消隔离。
+
+不要把更早文档里的 195 / 215 / 216 / 233 passed，或「251 passed, 2 failed」，当成当前结果。
 
 运行中的任务详情优先用 `GET /api/tasks/{id}/stream` 收事件；浏览器没有 `EventSource` 或连接失败时继续轮询。`queued` / `running` 可 `POST /api/tasks/{id}/cancel`，任务进入 `waiting_recovery` 后再恢复或终止。字段见 [docs/API.md](docs/API.md) 第 8 节。
 
