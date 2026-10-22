@@ -1,6 +1,5 @@
 import type { ArtifactView } from "../api/types";
 import { formatBytes, formatTime } from "../display";
-import { artifactTypeLabel } from "../i18n/zh";
 
 interface Props {
   artifacts: ArtifactView[];
@@ -28,7 +27,7 @@ export function ArtifactViewer({ artifacts, onOpen }: Props) {
         {artifacts.map((artifact) => (
           <tr key={artifact.artifact_id}>
             <td className="mono">{artifact.artifact_id}</td>
-            <td title={artifact.artifact_type}>{artifactTypeLabel(artifact.artifact_type)}</td>
+            <td className="mono">{artifact.artifact_type}</td>
             <td className="mono">{artifact.source_version ?? "—"}</td>
             <td className="mono">{artifact.producer_attempt_id ?? "—"}</td>
             <td className="mono">{formatBytes(artifact.size)}</td>

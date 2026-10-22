@@ -13,12 +13,15 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from app.agents.base import AgentContext
-from app.registry.agents import AgentRegistry
+from app.registry.agents import AgentRegistry, AgentRegistrationError
+from app.registry.tools import ToolRegistry
 from app.schemas.agents import AgentSpec
 from app.schemas.enums import AttemptStatus, EventType
 from app.schemas.results import TaskResult
 from app.schemas.tasks import Attempt, TaskEnvelope
+from app.services.artifacts import ArtifactService
 from app.services.events import EventSink
+from app.services.workspace import WorkspaceService
 from app.storage.repositories import Repos
 
 

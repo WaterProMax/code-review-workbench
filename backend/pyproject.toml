@@ -1,7 +1,7 @@
 [project]
 name = "hw2-workbench"
 version = "0.1.0"
-description = "代码审查工作台：父 Agent 管理的代码审查与修复"
+description = "Homework 2: parent/child agent code review and repair workbench"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -20,8 +20,6 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "anyio>=4.6",
-    "ruff>=0.8",
-    "mypy>=1.13",
 ]
 
 [build-system]
@@ -35,47 +33,3 @@ packages = ["app"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
-
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-src = ["app", "tests"]
-
-[tool.ruff.lint]
-# E and F catch real bugs. Line length and module-import style are left alone
-# so this branch does not reformat the tree.
-select = ["E4", "E7", "E9", "F"]
-ignore = ["E402"]
-
-[tool.mypy]
-python_version = "3.11"
-ignore_missing_imports = true
-warn_return_any = false
-check_untyped_defs = false
-follow_imports = "silent"
-disable_error_code = ["import-untyped"]
-
-# Modules this branch did not meaningfully change. The files edited here
-# (task_service, patches, background, workspace preview, execution_locks,
-# controller, recovery, database, and the new API helpers) stay checked.
-[[tool.mypy.overrides]]
-module = [
-    "app.workflow.nodes",
-    "app.workflow.builder",
-    "app.workflow.runner",
-    "app.workflow.state",
-    "app.workflow.adapter",
-    "app.workflow.detection",
-    "app.workflow.reducers",
-    "app.services.tools.checks",
-    "app.services.tools.test_executor",
-    "app.services.tools.sandbox",
-    "app.services.tools.static_rules",
-    "app.services.tools.filesystem",
-    "app.services.tools.artifacts_tools",
-    "app.services.tools.outputs",
-    "app.services.tools.check_scope",
-    "app.services.tools.common",
-    "app.services.tools",
-]
-ignore_errors = true

@@ -28,11 +28,12 @@ from app.services.workspace import WorkspaceService
 from app.settings import Settings
 from app.storage.checkpoints import open_checkpointer
 from app.storage.repositories import Repos
-from app.workflow.recovery import RecoveryRejected
+from app.workflow.recovery import RecoveryRejected, RunRightDenied
 from app.workflow.runner import WorkflowRunner
 from tests.fixtures import builders
 from tests.fixtures.workflow import (
     BUGGY_SOURCE,
+    CLEAN_SOURCE,
     MUTABLE_DEFAULT_FINDING,
     build_harness,
     make_scripted_client,

@@ -18,7 +18,6 @@ from app.settings import (
     CAP_MAX_EVIDENCE_RETRIES,
     CAP_MAX_FIX_RETRIES,
     CAP_MAX_GENERATE_RETRIES,
-    CAP_MAX_PATCH_INVALID,
     CAP_MAX_REPAIR_ROUNDS,
     CAP_MAX_REVIEW_RETRIES,
     CAP_MAX_VERIFICATION_RETRIES,
@@ -50,7 +49,6 @@ BUDGET_CONFIG_FIELD: dict[str, str] = {
     BudgetKind.FIX_RETRY.value: "max_fix_retries",
     BudgetKind.EVIDENCE_RETRY.value: "max_evidence_retries",
     BudgetKind.GENERATE_RETRY.value: "max_generate_retries",
-    BudgetKind.PATCH_INVALID.value: "max_patch_invalid",
 }
 
 BUDGET_CAPS: dict[str, int] = {
@@ -60,7 +58,6 @@ BUDGET_CAPS: dict[str, int] = {
     BudgetKind.FIX_RETRY.value: CAP_MAX_FIX_RETRIES,
     BudgetKind.EVIDENCE_RETRY.value: CAP_MAX_EVIDENCE_RETRIES,
     BudgetKind.GENERATE_RETRY.value: CAP_MAX_GENERATE_RETRIES,
-    BudgetKind.PATCH_INVALID.value: CAP_MAX_PATCH_INVALID,
 }
 
 # task_kind -> the retry budget consumed when re-dispatching after execution faults

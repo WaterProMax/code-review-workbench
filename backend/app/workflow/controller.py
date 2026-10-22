@@ -37,7 +37,6 @@ from app.schemas.enums import (
     CheckStatus,
     EventType,
     PatchApplicationStatus,
-    ErrorCategory,
     RetryReason,
     ResultStatus,
     SkipReason,
@@ -331,11 +330,7 @@ class ParentController:
         ]
         if not nodes:
             raise ActionRejected("WORKFLOW_INCOMPLETE", "工作流没有可执行的 Agent 节点")
-        by_kind: dict[str, WorkflowNode] = {
-            node.task_kind: node
-            for node in nodes
-            if node.task_kind and node.id in DEFAULT_NODE_FOR_KIND.values()
-        }
+        by_kind = {n.task_kind: n for n in nodes if n.id in DEFAULT_NODE_FOR_KIND.values()}
         missing = [k for k in DEFAULT_NODE_FOR_KIND if k not in by_kind]
         if missing:
             raise ActionRejected("WORKFLOW_INCOMPLETE", f"工作流缺少任务类型 {missing}")
@@ -514,10 +509,6 @@ class ParentController:
                 task = self.repos.tasks.get(item.task_id)
                 if task is None or task.root_task_id != root_task_id:
                     problems.append(f"未知子任务 {item.task_id}")
-                elif task.status == TaskStatus.CANCELLED.value:
-                    # Cancelled children are finished, the same as failed children,
-                    # and may be dispatched again.
-                    pass
             if item.task_kind == TaskKind.VERIFY.value:
                 application = self.committed_application_for(root_task_id, source_version)
                 if application is None:
@@ -569,12 +560,7 @@ class ParentController:
         source_version: str,
         contract_artifact: str,
     ) -> list[DispatchItem]:
-        if isinstance(action, DispatchTaskAction):
-            raw = [action.task]
-        elif isinstance(action, DispatchBatchAction):
-            raw = list(action.tasks)
-        else:
-            raise ActionRejected("ACTION_MISMATCH", "只有派发动作可以解析子任务")
+        raw = [action.task] if isinstance(action, DispatchTaskAction) else action.tasks  # type: ignore[attr-defined]
         resolved: list[DispatchItem] = []
         for item in raw:
             refs = self._build_refs(
@@ -636,8 +622,6 @@ class ParentController:
         if not attempts:
             return RetryReason.INITIAL.value
         last = attempts[-1]
-        if item.task_kind == TaskKind.FIX.value and self._patch_invalid_retry(last):
-            return RetryReason.PATCH_INVALID.value
         terminal = self.repos.terminals.get(last.attempt_id)
         if terminal is not None and terminal.origin is TerminalOrigin.CONTROLLER:
             # the attempt was invalidated by the control layer (timeout/interruption)
@@ -650,30 +634,6 @@ class ParentController:
         if source_version and last.source_version != source_version:
             return RetryReason.NEW_VERSION_REVERIFY.value
         return RetryReason.INSUFFICIENT_EVIDENCE.value
-
-    def _patch_invalid_retry(self, last: Attempt) -> bool:
-        """True when the last fix attempt failed because the patch could not be applied."""
-        result = self.repos.results.get_by_attempt(last.attempt_id)
-        if result is not None and result.error is not None:
-            if result.error.category in (
-                ErrorCategory.INVALID_PATCH,
-                ErrorCategory.PATCH_CONFLICT,
-            ):
-                return True
-            if result.error.code in {
-                "PATCH_INVALID",
-                "PATCH_CONFLICT",
-                "PATCH_APPLICATION_FAILED",
-                "PATCH_SPEC_REWRITE",
-            }:
-                return True
-        for application in self.repos.patch_applications.list_by_root(last.root_task_id):
-            if (
-                application.repair_attempt_id == last.attempt_id
-                and application.status is PatchApplicationStatus.FAILED
-            ):
-                return True
-        return False
 
     def build_envelope(
         self, attempt: Attempt, task: Task, item: DispatchItem, workflow: WorkflowConfig
@@ -688,7 +648,7 @@ class ParentController:
             agent_version=task.agent_version or workflow.agents.get(task.agent_id or "", "1.0"),
             task_kind=task.task_kind or "",
             goal=task.goal,
-            input_refs=InputRefs.model_validate(attempt.input_refs),
+            input_refs=InputRefs(**attempt.input_refs),
             source_version=attempt.source_version,
             contract_version=attempt.contract_version or "",
             acceptance_criteria=item.acceptance_criteria,
@@ -900,7 +860,7 @@ class ParentController:
                 if artifact.artifact_type is ArtifactType.TEST_ARTIFACT and artifact.metadata.get("bundle"):
                     refs["generated_tests"] = artifact.artifact_id
                     break
-        return InputRefs.model_validate(refs)
+        return InputRefs(**refs)
 
     def _resolve_adapter(
         self, adapter: InputAdapter, root_task_id: str, source_version: str

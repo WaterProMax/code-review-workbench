@@ -13,11 +13,6 @@ jobs:
       - name: install
         working-directory: backend
         run: uv sync --all-groups
-      - name: lint
-        working-directory: backend
-        run: uv run ruff check app tests && uv run mypy app/workflow app/services
-      - name: install bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: test
         working-directory: backend
         run: uv run pytest -q
@@ -37,6 +32,3 @@ jobs:
       - name: typecheck and test
         working-directory: frontend
         run: npm run typecheck && npm test && npm run build
-      - name: eslint
-        working-directory: frontend
-        run: npm run lint

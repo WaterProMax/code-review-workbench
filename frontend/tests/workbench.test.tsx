@@ -220,7 +220,6 @@ describe("workbench", () => {
     // execution status and check verdict are separate facts
     expect(screen.getByText("必需检查全部通过")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("首次审查完整通过，修复与验证未执行")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("tab", { name: "验证" }));
     expect(screen.getByText("还没有验证报告（首次审查通过时修复与验证会被跳过）。")).toBeInTheDocument();
   });
 
@@ -267,22 +266,18 @@ describe("workbench", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("tab", { name: "问题与补丁" }));
     await screen.findByText("补丁与差异");
     await waitFor(() => expect(screen.getByText("已提交")).toBeInTheDocument());
     expect(screen.getByText(/\+new/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "验证" }));
     expect(screen.getByText(/判断依据|复用确定性检查结果/)).toBeInTheDocument();
     // the check appears in both the contract table and the verification evidence
     expect(screen.getAllByText("CHK-MUTABLE").length).toBeGreaterThanOrEqual(2);
     // the finding row shows the persisted (closed) state, not the immutable review
     // snapshot, which still claims the finding is open
-    fireEvent.click(screen.getByRole("tab", { name: "问题与补丁" }));
     expect(await screen.findByText("共享可变默认参数 items=[]")).toBeInTheDocument();
     expect(screen.getByText("已解决")).toBeInTheDocument();
     expect(screen.queryByText("未解决")).not.toBeInTheDocument();
     expect(calls.some((call) => call.url === "/api/tasks/T-1/findings")).toBe(true);
-    fireEvent.click(screen.getByRole("tab", { name: "时间线" }));
     const timelineBody = screen.getByText("执行时间线").closest("section")!.querySelector("tbody")!;
     expect(within(timelineBody as HTMLElement).getByText("补丁已应用")).toBeInTheDocument();
   });
@@ -327,11 +322,10 @@ describe("workbench", () => {
       </MemoryRouter>,
     );
 
+    await screen.findByText("恢复与终止");
     expect((await screen.findAllByText("追加 repair_round 额度后恢复任务")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("检查未通过")).toBeInTheDocument();
     expect(screen.getByText("存在代码缺陷")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "恢复" }));
-    await screen.findByText("恢复与终止");
 
     fireEvent.click(screen.getByRole("button", { name: "请求恢复" }));
     await waitFor(() => {
@@ -353,7 +347,6 @@ describe("workbench", () => {
         <App />
       </MemoryRouter>,
     );
-    fireEvent.click(await screen.findByRole("tab", { name: "时间线" }));
     await screen.findByText("执行时间线");
     const table = screen.getByText("执行时间线").closest("section")!;
     // the filter dropdown also lists event labels, so query inside the table body
@@ -387,7 +380,6 @@ describe("workbench", () => {
     fireEvent.click(screen.getByRole("button", { name: "上传并建立输入清单" }));
     await waitFor(() => expect(screen.getByText(/s-1/)).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "填入示例" }));
     fireEvent.click(screen.getByRole("button", { name: "提交任务" }));
     await waitFor(() =>
       expect(screen.getByText(/MODEL_NOT_CONFIGURED/)).toBeInTheDocument(),

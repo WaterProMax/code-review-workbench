@@ -1,16 +1,10 @@
 # HW2 综合验收与测试矩阵（P11）
 
-> **当前结论（2026-10-20，`91df752`）**。下面三条历史记录里的 195 / 215 / 216 / 233 passed、前端 13 passed、以及「1 xfailed」都不是现在的结果，也不是未修复的失败。
->
-> - 后端：`cd backend && uv run pytest -q` → **274 passed**（Linux，已安装 bubblewrap）。`test_timeout_reaps_descendants` 与 `test_cancelled_check_reaps_descendants` **通过**。它们曾经因 `RLIMIT_NPROC=256` 在线程多的机器上 `BlockingIOError` 失败；该限制已删除，见 §5.3。
-> - 前端：`cd frontend && npm test` → **27 passed**（9 个文件）。`npm run typecheck` 与 `npm run build` 通过。
-> - A01–A37 通过。A15 的 xfail 已取消（§5.1）。A33 不再同时扣 `repair_round` 和 `fix_retry`（§3、§5.3）。
+> **2026-10-09 真实模型追加验收**：推送修复后，以同一后端源码运行 DeepSeek 五次完整流程，**5/5 completed / passed=true**。额外 28 项行为断言通过，254 个产物哈希一致，两次并行确实同版本重叠执行并收齐后结束。请求 deepseek-chat，实际响应 deepseek-flash；记录 128 次工作流模型响应、869,073 tokens。详见 [五次真实联调记录](DeepSeekFiveRuns-2026-10-09.md) 与去敏 JSON。下段“本轮没有调用真实 DeepSeek”属于此前修复回归阶段。
 
-> **历史记录（2026-10-09 真实模型追加验收，不是当前测试计数）**：推送修复后，以同一后端源码运行 DeepSeek 五次完整流程，**5/5 completed / passed=true**。额外 28 项行为断言通过，254 个产物哈希一致，两次并行确实同版本重叠执行并收齐后结束。请求 deepseek-chat，实际响应 deepseek-flash；记录 128 次工作流模型响应、869,073 tokens。详见 [五次真实联调记录](DeepSeekFiveRuns-2026-10-09.md) 与去敏 JSON。这条记录之前的回归说明里写过“本轮没有调用真实 DeepSeek”，指的是当时那次后端回归，不是现在缺联调。
+> **2026-10-09 后端回归**：对照实施计划检查后端架构，修复总任务初始化入口归属和 7 项后端缺陷。新增 17 个回归用例，执行 `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider` → **233 passed in 24.98s**。覆盖未知规则/通配符、实际 lifespan 中的延后租约失效、跨任务/操作幂等键、两个独立事件循环并发提交、8 MiB 测试输出、HTTP 人工终止报告、证据不足及报告失败回滚。详细架构映射和证据见 [后端架构核查记录](BackendArchitectureAudit-2026-10-09.md)。本轮没有调用真实 DeepSeek 或重测前端；下文模型与浏览器结论属于对应日期的历史验收。
 
-> **历史记录（2026-10-09 后端回归，当时 233 passed，不是当前计数）**：对照实施计划检查后端架构，修复总任务初始化入口归属和 7 项后端缺陷。新增 17 个回归用例，执行 `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider` → **233 passed in 24.98s**。覆盖未知规则/通配符、实际 lifespan 中的延后租约失效、跨任务/操作幂等键、两个独立事件循环并发提交、8 MiB 测试输出、HTTP 人工终止报告、证据不足及报告失败回滚。详细架构映射和证据见 [后端架构核查记录](BackendArchitectureAudit-2026-10-09.md)。该轮没有调用真实 DeepSeek，也没有重测前端。
-
-> **历史记录（2026-10-08 浏览器联调，当时 216 / 13 passed，不是当前计数）**：修复布局、画布反馈和恢复后的旧拒绝反馈问题；通过页面完成真实并行任务与恢复任务。详见 [前端浏览器联调记录](FrontendTest-2026-10-08.md)。同日更早一轮的全量是 215 passed，也已过时。
+> 最新浏览器联调追加记录：修复布局、画布反馈和恢复后的旧拒绝反馈问题，后端全量 **216 passed**、前端 **13 passed**、生产构建通过；通过页面完成真实并行任务与恢复任务。详见 [前端浏览器联调记录](FrontendTest-2026-10-08.md)。下文 215 项为上一轮修复的历史统计。
 
 本文记录 ImplementationPlan §15 的验收执行情况：每个必须通过的场景（A01–A37）的输入、
 运行方式、实际结果与可定位证据。所有结论来自本仓库**真实组件**（真实 SQLite、真实工作区、
@@ -25,7 +19,7 @@
 ```bash
 cd backend
 uv sync --dev
-uv run pytest -q                      # 全量；2026-10-20 为 274 passed
+uv run pytest -q                      # 全量；2026-10-09 为 233 passed
 uv run pytest tests/e2e -q            # HTTP 与验收场景
 uv run pytest -q --collect-only       # 列出全部用例 id
 ```
@@ -53,13 +47,11 @@ asyncio.run(m())"
 
 | 汇总 | 结果 |
 |---|---|
-| 后端用例 | **274 passed**（2026-10-20，`uv run pytest -q`，Linux + bubblewrap） |
-| 前端用例 | **27 passed**（9 个文件：workbench 5、orchestration 9、stream 3、cancel 3、polling 2、display 2、diff 1、strictmode 1、steps 1） |
+| 后端用例 | **215 passed**（`uv run pytest -q`，约 25s） |
+| 前端用例 | **13 passed**（workbench 5 + orchestration 7 + polling 1，`npx vitest run`） |
 | 类型检查 / 构建 | `tsc --noEmit` 通过；`vite build` 通过 |
-| 必须通过场景 | **A01–A37 通过**。A15 旧 xfail 已取消（§5.1）。A33 已改为只扣 `fix_retry`（§5.3） |
-| 真实模型联调 | **4/4** 与随后的 **5/5** 都已通过（§5.2 与文首 2026-10-09 记录）。初测 0/4 是修复前的历史，不是当前失败 |
-
-历史计数，不要当成当前失败或当前规模：P11 早期记录曾是 195 passed、1 xfailed（该 xfail 是 A15，已修复）；2026-10-08 为 215 passed / 前端 13 passed，浏览器联调一轮为 216 / 13；2026-10-09 后端回归为 233 passed。
+| 必须通过场景 | **A01–A37 通过**；A15 已取消 xfail，增加恢复后 completed/true 断言（见 §5.1） |
+| 真实模型联调 | **4/4 completed / passed=true**，最终源码同版回归（见 §5.2） |
 
 测试分层（§15.1）：协议与完成检测用单元测试；数据库、工作区、图与恢复用真实组件集成测试；
 用户关键路径用 HTTP/浏览器端到端测试。模型输出由脚本模型控制不稳定因素，但真实
@@ -91,7 +83,7 @@ LangGraph、SQLite、文件工具与补丁应用**不替换**为固定成功函�
 | A18 | 恢复追加一轮 | T22 `test_recovery.py::test_resume_grants_budget_atomically_and_is_idempotent`；T20 `test_api.py::test_http_resume_after_exhausted_repair_budget` | 累计计数保留、最大额度增加、有追加记录 |
 | A19 | 上传及产物边界 | T23 `test_api.py::test_upload_rejects_unknown_suffix_and_unsafe_path`；T24 `test_workspace.py::test_artifact_reads_are_confined_and_ownership_is_checked` | 路径穿越/超限/跨任务引用被拒 |
 | A20 | 父模型非法决策 | T25 `test_sequential_workflow.py::test_illegal_parent_action_is_corrected`；T26 `tests/e2e/test_acceptance_scenarios.py::test_a37_parent_correction_limit_waits_with_a_reason` | 校验拒绝、有限纠正；不能绕过依赖或凭空 finish |
-| A21 | 画布保存并运行 | T27 `frontend/tests/orchestration.test.tsx`（9 项，含运行时图）；T28 `test_api.py::test_workflow_templates_and_illegal_config_rejection` | 重载一致；合法变更改变真实执行路径；非法配置不能运行；未保存的配置也能预览运行时图 |
+| A21 | 画布保存并运行 | T27 `frontend/tests/orchestration.test.tsx`（7 项）；T28 `test_api.py::test_workflow_templates_and_illegal_config_rejection` | 重载一致；合法变更改变真实执行路径；非法配置不能运行 |
 | A22 | 新 Agent 接入 | T29 `tests/integration/test_extension_agent.py::test_extension_role_is_dispatched_reported_and_used_as_verifier_input`；T30 `test_api.py::test_extension_workflow_runs_over_http`；T31 `tests/unit/test_config_files.py::test_extension_template_is_registered_and_expands_from_the_plugin` | 无专用父派发分支；注册后统一执行/回报/日志/版本恢复 |
 | A23 | 刷新与增量日志 | T32 `frontend/tests/workbench.test.tsx`（5 项）；T33 `test_api.py::test_full_flow_over_http`（增量 events）；T34 `test_persistence.py::test_event_sequence_is_unique_under_concurrency` | 同一任务不重复提交；事件无重复/遗漏；状态与产物仍可查 |
 | A24 | 缺模型密钥/真实调用失败 | T35 `tests/integration/test_agents.py::test_llm_client_requires_real_credentials`、`::test_scripted_model_never_replaces_a_missing_real_model`；T36 `test_api.py::test_submit_without_model_configuration_returns_503` | 明确配置/故障状态；脚本结果不冒充真实通过 |
@@ -103,7 +95,7 @@ LangGraph、SQLite、文件工具与补丁应用**不替换**为固定成功函�
 | A30 | 等待任务终止与恢复竞争 | T13 `test_a30_mismatched_and_late_reports_are_audited_only`；T43 `test_recovery.py::test_terminate_preserves_null_verdict_and_skips_children` | terminate/resume 仅一个生效；结论区分 false/null；终态拒绝 resume |
 | A31 | 超时终态与正常回报竞争 | T44 `test_a31_final_state_refuses_resume_so_terminate_wins`；T45 `test_api.py::test_restart_keeps_tasks_queryable_and_rejects_terminate_on_running` | 唯一终态；控制层合法关闭等待项；迟到回报仅审计，不死锁 |
 | A32 | 验证额度耗尽后恢复 | T46 `test_a32_verify_top_up_grants_only_verify_and_over_cap_writes_nothing`；T19 `test_recovery.py::test_resume_rejects_unknown_or_over_cap_grants_without_partial_writes` | 无追加时拒绝且不部分更新；追加 verify 后继续，repair 计数不变 |
-| A33 | 修复故障重派与恢复重放 | T47 `tests/e2e/test_acceptance_scenarios.py::test_a33_fix_fault_retry_consumes_only_fix_retry`；T11 `test_persistence.py::test_budget_ledger_counts_once_per_operation`；T5 `test_parallel_and_timeout.py` | 执行故障的 fix 只扣 `fix_retry`，不扣 `repair_round`；正常修复只扣 `repair_round`。旧结论「两份额度一起扣」已废弃（§5.3）。重放不重复扣减 |
+| A33 | 修复故障重派与恢复重放 | T47 `test_a33_fix_fault_retry_consumes_both_declared_budgets`；T11 `test_persistence.py::test_budget_ledger_counts_once_per_operation`；T5 `test_parallel_and_timeout.py` | 新 fix attempt 同计 repair/fix 故障额度；重放不重复扣减 |
 | A34 | 画布模式冲突与默认值冻结 | T48 `test_api.py::test_a34_mode_conflict_and_frozen_workflow_defaults`；T31 `tests/unit/test_config_files.py` | 不一致请求被拒；运行固定展开配置；旧任务不受新工作流影响 |
 | A35 | 补充材料/目标的恢复请求 | T49 `test_api.py::test_a35_resume_cannot_change_the_task_inputs` | 原任务拒绝新 source/goal；旧证据仍可查 |
 | A36 | 新版本/新测试集复用旧证据 | T50 `test_a36_old_version_evidence_cannot_close_a_new_version_finding` | 对源码版本核验；旧版本证据不能关闭新版本问题 |
@@ -111,12 +103,10 @@ LangGraph、SQLite、文件工具与补丁应用**不替换**为固定成功函�
 
 ## 4. 前端与浏览器验收（P09/P10）
 
-- `frontend/tests/orchestration.test.tsx`（9）：模板加载与合法执行边 + 输入依赖；角色下拉
+- `frontend/tests/orchestration.test.tsx`（7）：模板加载与 9 条合法执行边 + 输入依赖；角色下拉
   仅列出能承担该节点任务类型的角色；扩展模板含 `test_artifact` 依赖；非法连线标红且禁用保存；
-  后端字段级错误定位到 `nodes.ghost.task_kind`；预算编辑与快速保存的目标版本随请求发出；
-  运行时图画虚线条件边，加载失败时显示中文错误。
+  后端字段级错误定位到 `nodes.ghost.task_kind`；预算编辑与快速保存的目标版本随请求发出。
 - `frontend/tests/workbench.test.tsx`（5）：事件增量拉取与去重、问题状态取权威接口、三态展示等。
-- 2026-10-20 增补且已通过：`strictmode.test.tsx`（StrictMode 下持续读取）、`stream.test.tsx`（断流回轮询、里程碑才全量刷新）、`cancel.test.tsx`（409 后用新 revision 重试一次）、`diff.test.tsx`（新增行单独成行）。这些不是未关闭的失败项。
 - 真实浏览器联调（P09/P10，见 `docs/Handoff.md`）：工作台与编排页连接真实后端，呈现三种交互类
   （首次通过 / 修复成功 / 待恢复）、刷新续拉同一任务、加载三个模板并真实保存 `wf-canvas-verify`
   （`curl /api/workflows/wf-canvas-verify` 回读确认）。**生产代码无 mock 分支**。
@@ -147,15 +137,6 @@ cd backend
 # 按需补跑指定场景；密钥在隐藏输入中提供
 .venv/bin/python scripts/smoke_real_model.py --cases parallel
 ```
-
-### 5.3 2026-10-20 已关闭的旧失败
-
-下面两条曾经被写成当前失败或当前规则。代码已经改掉，全量 274 passed 包含对应用例。不要再按旧描述排查。
-
-1. **进程数限制导致两个回收测试失败。** 旧现象：`test_timeout_reaps_descendants` 与 `test_cancelled_check_reaps_descendants` 在用户线程数超过 256 时因 `BlockingIOError: [Errno 11]` 失败，README 曾写成 251 passed、2 failed。原因是 `RLIMIT_NPROC` 按整个用户计数，不是按该子进程树计数。`apply_sandbox_rlimits` 已不再设置 `RLIMIT_NPROC`。这两项现在通过；生成测试改在 bubblewrap 里运行。
-2. **A33 执行故障同时扣两份额度。** 旧用例名 `test_a33_fix_fault_retry_consumes_both_declared_budgets` 已不存在。当前用例是 `test_a33_fix_fault_retry_consumes_only_fix_retry`：`retry_reason=execution_fault` 的 fix 只扣 `fix_retry`；`business_repair` 只扣 `repair_round`。格式错误的补丁在工具层预检失败，不扣 `repair_round`。
-
-A15 的 strict xfail 更早已经取消，证据在 §5.1，不是本轮仍开放的失败。
 
 ## 6. 证据定位
 

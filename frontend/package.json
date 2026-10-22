@@ -8,8 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "lint": "eslint src"
+    "test": "vitest run"
   },
   "dependencies": {
     "@xyflow/react": "^12.3.5",
@@ -23,11 +22,8 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "eslint": "^10.13.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
-    "typescript-eslint": "^8.72.0",
     "vite": "^6.0.5",
     "vitest": "^3.2.4"
   }

@@ -11,14 +11,7 @@ export type RootStatus =
   | "failed"
   | "interrupted";
 
-export type TaskStatus =
-  | "blocked"
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "skipped"
-  | "cancelled";
+export type TaskStatus = "blocked" | "queued" | "running" | "completed" | "failed" | "skipped";
 
 export type AttemptStatus =
   | "queued"
@@ -127,22 +120,6 @@ export interface WorkflowConfig {
   workflow_version?: string | null;
   semantic_hash?: string | null;
   tool_policy_versions?: Record<string, string>;
-}
-
-export interface RuntimeGraphNode {
-  id: string;
-}
-
-export interface RuntimeGraphEdge {
-  source: string;
-  target: string;
-  conditional: boolean;
-}
-
-export interface RuntimeGraphResponse {
-  mermaid: string;
-  nodes: RuntimeGraphNode[];
-  edges: RuntimeGraphEdge[];
 }
 
 export interface WorkflowSaveResponse {
@@ -295,8 +272,6 @@ export interface TaskDetailResponse {
   checks: CheckSummary[];
   budgets: BudgetStatus;
   artifact_refs: string[];
-  /** LangGraph node ids currently scheduled. Optional until the backend ships them. */
-  current_nodes?: string[];
   created_at: string;
   updated_at: string;
 }

@@ -53,9 +53,6 @@ class WorkflowState(TypedDict, total=False):
     last_application: dict[str, Any] | None
     last_application_error: dict[str, Any] | None
     controller_faults: list[dict]
-    # Per-branch faults from Send. ``extend`` so parallel branches can each append.
-    # Old checkpoints still use controller_faults; detect prefers this channel.
-    branch_faults: Annotated[list[dict], extend]
     patched: bool
     failure_signature: str | None
     detected_source_version: str | None
@@ -90,7 +87,6 @@ class WorkflowState(TypedDict, total=False):
     next_action: dict[str, Any] | None
     decision_ids: Annotated[list[str], append_unique]
     action_rejections: Annotated[list[dict], extend]
-    # Legacy offset. Resume now clears action_rejections with Overwrite.
     rejection_history_start: int
     rejection_count: int
 
@@ -149,7 +145,6 @@ def initial_state(
         last_application=None,
         last_application_error=None,
         controller_faults=[],
-        branch_faults=[],
         patched=False,
         failure_signature=None,
         detected_source_version=None,

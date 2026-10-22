@@ -6,17 +6,11 @@ Design notes (ImplementationPlan §6.1):
 * every write goes through a short ``transaction`` block — model and tool calls
   never run while a write transaction is open;
 * WAL + ``busy_timeout`` + a bounded retry give sane local concurrent behaviour;
-* foreign keys and ``busy_timeout`` are per connection. WAL mode is persistent
-  on the database file, so it is applied once per path;
-* lock retries call ``time.sleep`` only off the event loop. On the loop the
-  pause is skipped so a contended transaction cannot stall other tasks. Callers
-  on the loop (the SSE tail) run the query in a worker thread, where the normal
-  backoff applies.
+* foreign keys are enabled on every connection.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextvars
 import logging
 import sqlite3
@@ -32,8 +26,6 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 _LOCK_MESSAGES = ("database is locked", "database table is locked")
 _MAX_RETRIES = 6
 _BASE_DELAY = 0.02
-# Paths whose database file has already been switched to WAL.
-_WAL_READY: set[str] = set()
 
 # The active transaction of the *current context* (one per asyncio task). Using a
 # ContextVar rather than a thread-local means two concurrently running attempts
@@ -47,32 +39,11 @@ class MigrationError(RuntimeError):
     pass
 
 
-def _apply_pragmas(conn: sqlite3.Connection, path: Path) -> None:
+def _apply_pragmas(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
-    key = str(path.resolve())
-    if key in _WAL_READY:
-        return
-    row = conn.execute("PRAGMA journal_mode").fetchone()
-    mode = str(row[0]).lower() if row else ""
-    if mode != "wal":
-        conn.execute("PRAGMA journal_mode = WAL")
-    _WAL_READY.add(key)
-
-
-def _pause_for_lock(attempt: int) -> None:
-    """Back off after ``SQLITE_BUSY`` without blocking the event loop.
-
-    Off the loop this is ``time.sleep`` with exponential delay. On the loop the
-    sleep is skipped: blocking here would freeze every other request. The SSE
-    reader runs its query via ``asyncio.to_thread``, so its retries still sleep
-    on the worker.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        time.sleep(_BASE_DELAY * (2**attempt))
+    conn.execute("PRAGMA busy_timeout = 5000")
 
 
 class Database:
@@ -92,7 +63,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
-        _apply_pragmas(conn, self.path)
+        _apply_pragmas(conn)
         return conn
 
     @contextmanager
@@ -122,7 +93,7 @@ class Database:
                 conn.close()
                 conn = None
                 if any(msg in str(exc) for msg in _LOCK_MESSAGES) and attempt < _MAX_RETRIES:
-                    _pause_for_lock(attempt)
+                    time.sleep(_BASE_DELAY * (2**attempt))
                     continue
                 raise
 

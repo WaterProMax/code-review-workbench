@@ -1,6 +1,5 @@
 import type { DetectionResult, ExecutionEvent } from "../api/types";
 import { detectionToken, summarizePayload } from "../display";
-import { actionLabel } from "../i18n/zh";
 import { StatusBadge } from "./Badges";
 
 interface Props {
@@ -11,9 +10,9 @@ interface Props {
 
 export function ParentDecisionPanel({ detection, requiredAction, latestDecision }: Props) {
   const reasoning = latestDecision
-    ? String(latestDecision.payload.reasoning ?? summarizePayload(latestDecision.payload, latestDecision.event_type))
+    ? String(latestDecision.payload.reasoning ?? summarizePayload(latestDecision.payload))
     : null;
-  const action = latestDecision ? String(latestDecision.payload.action ?? "") : "";
+  const action = latestDecision ? String(latestDecision.payload.action ?? "—") : "—";
   return (
     <section className="panel">
       <h2>父 Agent 检测与决策</h2>
@@ -46,7 +45,7 @@ export function ParentDecisionPanel({ detection, requiredAction, latestDecision 
           <tr>
             <th>最近父决策</th>
             <td>
-              <span title={action || undefined}>{action ? actionLabel(action) : "—"}</span>
+              <span className="mono">{action}</span>
             </td>
           </tr>
           <tr>

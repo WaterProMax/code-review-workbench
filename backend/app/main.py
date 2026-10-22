@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.api.deps import build_app_services
 from app.api.errors import install_error_handlers, set_request_id
@@ -70,9 +69,9 @@ def create_app(
             await services.runner.shutdown()
 
     app = FastAPI(
-        title="代码审查工作台 API",
+        title="Homework 2 Workbench API",
         version="0.1.0",
-        description="父 Agent 管理的代码审查工作台 API",
+        description="父 Agent 管理的代码审查与修复工作台 API",
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -95,23 +94,6 @@ def create_app(
         response.headers["X-Request-ID"] = rid
         return response
 
-    @app.middleware("http")
-    async def _api_token_middleware(request: Request, call_next):
-        token = (settings.api_token or "").strip()
-        if token and _requires_token(request):
-            header = request.headers.get("authorization", "")
-            if header != f"Bearer {token}":
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "code": "UNAUTHORIZED",
-                        "message": "缺少或错误的访问令牌",
-                        "details": {},
-                        "request_id": request.headers.get("X-Request-ID"),
-                    },
-                )
-        return await call_next(request)
-
     install_error_handlers(app)
 
     from app.api.agents import router as agents_router
@@ -132,15 +114,6 @@ def create_app(
         app.include_router(router, prefix="/api")
 
     return app
-
-
-def _requires_token(request: Request) -> bool:
-    path = request.url.path
-    if not path.startswith("/api/"):
-        return False
-    if request.method == "GET" and path.rstrip("/") == "/api/health":
-        return False
-    return True
 
 
 app = create_app()

@@ -33,7 +33,6 @@ class ErrorCode(str, Enum):
     NOT_RECOVERABLE = "NOT_RECOVERABLE"
     NOT_RESUMABLE = "NOT_RESUMABLE"
     NOT_TERMINABLE = "NOT_TERMINABLE"
-    UNAUTHORIZED = "UNAUTHORIZED"
     MODEL_NOT_CONFIGURED = "MODEL_NOT_CONFIGURED"
     MODEL_REQUEST_FAILED = "MODEL_REQUEST_FAILED"
     TEMPORARY_FAILURE = "TEMPORARY_FAILURE"
@@ -100,22 +99,6 @@ class TemplateListing(BaseModel):
     description: str
     check_mode: CheckMode
     config: WorkflowConfig
-
-
-class GraphNodeView(BaseModel):
-    id: str
-
-
-class GraphEdgeView(BaseModel):
-    source: str
-    target: str
-    conditional: bool = False
-
-
-class WorkflowGraphResponse(BaseModel):
-    mermaid: str
-    nodes: list[GraphNodeView]
-    edges: list[GraphEdgeView]
 
 
 # --------------------------------------------------------------------------- #
@@ -204,7 +187,6 @@ class TaskDetailResponse(BaseModel):
     checks: list[CheckSummary] = Field(default_factory=list)
     budgets: BudgetStatus = Field(default_factory=BudgetStatus)
     artifact_refs: list[str] = Field(default_factory=list)
-    current_nodes: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

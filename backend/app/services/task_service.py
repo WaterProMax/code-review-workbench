@@ -184,14 +184,11 @@ class TaskService:
     def _budgets_for(self, task_kind: str, retry_reason: str) -> list[str]:
         """Budget kinds consumed when an attempt is registered (§9.4)."""
         if task_kind == TaskKind.FIX.value:
-            # An execution fault is a retry of the same fix, not a new repair round.
+            # every new fix attempt consumes a repair round
+            kinds = [BudgetKind.REPAIR_ROUND.value]
             if retry_reason == RetryReason.EXECUTION_FAULT.value:
-                return [BudgetKind.FIX_RETRY.value]
-            # A patch that cannot be applied has its own cap and is not a repair round.
-            if retry_reason == RetryReason.PATCH_INVALID.value:
-                return [BudgetKind.PATCH_INVALID.value]
-            # A normal first fix and a business repair consume only a repair round.
-            return [BudgetKind.REPAIR_ROUND.value]
+                kinds.append(BudgetKind.FIX_RETRY.value)
+            return kinds
         if retry_reason == RetryReason.EXECUTION_FAULT.value:
             fault = TASK_KIND_FAULT_BUDGET.get(task_kind)
             if fault is None:
@@ -258,7 +255,11 @@ class TaskService:
                 application = self.find_application(root_task_id, dep.attempt_id, conn=conn)
                 if application is None or application.status.value != "committed":
                     problems.append(f"依赖的补丁应用 {dep.attempt_id} 尚未提交")
-            elif dep_task.status not in _FINISHED_CHILD_STATUSES:
+            elif dep_task.status not in (
+                TaskStatus.COMPLETED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.SKIPPED.value,
+            ):
                 problems.append(f"依赖任务 {dep.task_id} 尚未结束（当前 {dep_task.status}）")
         return problems
 
@@ -493,12 +494,12 @@ class TaskService:
         failed: list[str] = []
         missing: list[str] = []
         for check_id in required_check_ids:
-            current = latest.get(check_id)
-            if current is None:
+            result = latest.get(check_id)
+            if result is None:
                 missing.append(check_id)
-            elif current.status is CheckStatus.FAILED:
+            elif result.status is CheckStatus.FAILED:
                 failed.append(check_id)
-            elif current.status is not CheckStatus.PASSED:
+            elif result.status is not CheckStatus.PASSED:
                 missing.append(check_id)
 
         if failed:
@@ -543,48 +544,24 @@ class TaskService:
             latest[result.check_id] = result
         failed: list[str] = []
         for check_id in required_check_ids:
-            current = latest.get(check_id)
-            if current is None or current.status not in (
+            result = latest.get(check_id)
+            if result is None or result.status not in (
                 CheckStatus.PASSED,
                 CheckStatus.FAILED,
             ):
                 return False, []
-            if current.status is CheckStatus.FAILED:
+            if result.status is CheckStatus.FAILED:
                 failed.append(check_id)
         return bool(failed), failed
 
     def has_in_flight_work(self, root_task_id: str) -> bool:
-        """True while an attempt is still active or a batch is not fully collected.
-
-        A cancelled child is finished, the same way a failed child is: its attempts
-        do not keep the root in flight.
-        """
-        cancelled = {
-            task.task_id
-            for task in self.repos.tasks.list_children(root_task_id)
-            if task.status == TaskStatus.CANCELLED.value
-        }
-        active = [
-            attempt
-            for attempt in self.repos.attempts.list_active(root_task_id)
-            if attempt.task_id not in cancelled
-        ]
-        if active:
+        """True while an attempt is still active or a batch is not fully collected."""
+        if self.repos.attempts.list_active(root_task_id):
             return True
         return any(
             batch and batch["status"] != "complete"
             for batch in self.repos.batches.list_by_root(root_task_id)
         )
-
-
-_FINISHED_CHILD_STATUSES = frozenset(
-    {
-        TaskStatus.COMPLETED.value,
-        TaskStatus.FAILED.value,
-        TaskStatus.SKIPPED.value,
-        TaskStatus.CANCELLED.value,
-    }
-)
 
 
 def _version_of(root: Task, agent_id: str) -> str:

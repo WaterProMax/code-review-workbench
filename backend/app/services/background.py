@@ -69,18 +69,21 @@ class TaskRunnerService:
         self._handles: dict[str, RunHandle] = {}
 
     # ---- model readiness ---------------------------------------------------
-    async def ensure_model_ready(self) -> None:
+    def ensure_model_ready(self) -> None:
         """Fail fast (503) when no model is configured, before minting a task.
 
-        The factory is called here so a ``ConfigurationError`` reaches the request
-        instead of being swallowed by a detached task. The probe client is closed
-        before returning; it is not left to an unreferenced task.
+        The factory is called synchronously so a ``ConfigurationError`` reaches the
+        request instead of being swallowed by a detached task.
         """
         client = self.llm_factory()
         close = getattr(client, "aclose", None)
         if close is None:
             return
-        await close()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - no loop in sync context
+            return
+        loop.create_task(close())
 
     # ---- introspection -----------------------------------------------------
     def is_running(self, root_task_id: str) -> bool:
@@ -178,8 +181,6 @@ class TaskRunnerService:
             self._mark_internal_error(handle.root_task_id, exc)
         finally:
             handle.done.set()
-            if self._handles.get(handle.root_task_id) is handle:
-                del self._handles[handle.root_task_id]
 
     def _mark_internal_error(self, root_task_id: str, exc: Exception) -> None:
         message = f"内部错误：{type(exc).__name__}: {exc}"[:400]
@@ -256,49 +257,43 @@ class TaskRunnerService:
         adapter.context_factory = make_context
 
     async def _run(self, *, root_task_id: str, workflow_version: str | None = None, **kwargs: Any) -> None:
-        client = self.llm_factory()
-        try:
-            handle = self._handles.get(root_task_id)
-            cancellation = handle.cancellation if handle is not None else None
+        handle = self._handles.get(root_task_id)
+        cancellation = handle.cancellation if handle is not None else None
+        if cancellation is not None and cancellation.is_set():
+            return
+        workflow = self._workflow_for(root_task_id, workflow_version)
+        async with open_checkpointer(self.settings.checkpoints_db_path) as checkpointer:
             if cancellation is not None and cancellation.is_set():
                 return
-            workflow = self._workflow_for(root_task_id, workflow_version)
-            async with open_checkpointer(self.settings.checkpoints_db_path) as checkpointer:
-                if cancellation is not None and cancellation.is_set():
-                    return
-                assembly = assemble_workflow(
-                    settings=self.settings,
-                    repos=self.repos,
-                    workflow=workflow,
-                    llm=client,
-                    extensions=self.extensions,
+            assembly = assemble_workflow(
+                settings=self.settings,
+                repos=self.repos,
+                workflow=workflow,
+                llm=self.llm_factory(),
+                extensions=self.extensions,
+            )
+            if cancellation is not None:
+                self._bind_cancellation(assembly.runtime, cancellation)
+            graph = compile_graph(assembly, checkpointer=checkpointer)
+            runner = WorkflowRunner(
+                runtime=assembly.runtime,
+                graph=graph,
+                recovery=assembly.recovery,
+                owner=self.owner,
+            )
+            if cancellation is not None and cancellation.is_set():
+                return
+            if workflow_version is None:
+                await runner.resume(root_task_id=root_task_id)
+            else:
+                await runner.start(
+                    root_task_id=root_task_id,
+                    goal=kwargs["goal"],
+                    workflow_version=workflow.workflow_version or workflow_version,
+                    check_mode=kwargs.get("check_mode") or workflow.check_mode.value,
+                    source_version=kwargs["source_version"],
+                    source_artifact=kwargs["source_artifact"],
                 )
-                if cancellation is not None:
-                    self._bind_cancellation(assembly.runtime, cancellation)
-                graph = compile_graph(assembly, checkpointer=checkpointer)
-                runner = WorkflowRunner(
-                    runtime=assembly.runtime,
-                    graph=graph,
-                    recovery=assembly.recovery,
-                    owner=self.owner,
-                )
-                if cancellation is not None and cancellation.is_set():
-                    return
-                if workflow_version is None:
-                    await runner.resume(root_task_id=root_task_id)
-                else:
-                    await runner.start(
-                        root_task_id=root_task_id,
-                        goal=kwargs["goal"],
-                        workflow_version=workflow.workflow_version or workflow_version,
-                        check_mode=kwargs.get("check_mode") or workflow.check_mode.value,
-                        source_version=kwargs["source_version"],
-                        source_artifact=kwargs["source_artifact"],
-                    )
-        finally:
-            close = getattr(client, "aclose", None)
-            if close is not None:
-                await close()
 
     def _workflow_for(self, root_task_id: str, workflow_version: str | None) -> WorkflowConfig:
         if workflow_version is None:
